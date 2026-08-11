@@ -1,0 +1,10 @@
+{
+  "_glossary_comment": "Financial/domain terms (Wallet A/B/C, Binary Commission, Direct Commission, BV, Rank, package names, Platform Reserve) are NEVER translated — they stay in English in both locales. Only general UI text, labels, and navigation are translated here.",
+  "LanguageSwitcher": {
+    "en": "English",
+    "ar": "Arabic"
+  },
+  "HomePage": {
+    "title": "Investment Hub"
+  }
+}
