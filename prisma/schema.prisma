@@ -6,3 +6,163 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum Locale {
+  en
+  ar
+}
+
+enum AdminPermission {
+  CREDIT_ISSUANCE
+  WITHDRAWAL_APPROVAL
+  USER_MANAGEMENT
+  PACKAGE_MANAGEMENT
+  RATE_CONFIG
+  COMMISSION_CONFIG
+  RANK_CONFIG
+  LEDGER_VIEW
+  MANUAL_ADJUSTMENT
+  JOB_MONITOR
+  SOLVENCY_VIEW
+}
+
+enum AdminActionType {
+  USER_CREATED
+  PASSWORD_RESET
+}
+
+enum SecurityEventType {
+  LOGIN_FAILED
+  ACCOUNT_LOCKED
+  PASSWORD_RESET_FAILED
+  SECURITY_QUESTION_FAILED
+  TOTP_ENROLLED
+  TOTP_REMOVED
+  TOTP_FAILED
+}
+
+model User {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  passwordHash String @map("password_hash")
+  name      String
+
+  role        UserRole @default(USER)
+  isMainAdmin Boolean  @default(false) @map("is_main_admin")
+
+  createdByAdminId String? @map("created_by_admin_id")
+  createdByAdmin   User?   @relation("AdminCreatedUsers", fields: [createdByAdminId], references: [id])
+  adminCreatedUsers User[] @relation("AdminCreatedUsers")
+
+  sponsorId String? @map("sponsor_id")
+  sponsor   User?   @relation("SponsorTree", fields: [sponsorId], references: [id])
+  referrals User[]  @relation("SponsorTree")
+
+  locale Locale @default(en)
+
+  suspendedAt DateTime? @map("suspended_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  totpSecret    String?   @map("totp_secret")
+  totpEnrolledAt DateTime? @map("totp_enrolled_at")
+
+  permissionGrants AdminPermissionGrant[]
+
+  adminActionsPerformed AdminAction[] @relation("AdminActionActor")
+  adminActionsReceived  AdminAction[] @relation("AdminActionTarget")
+
+  securityQuestions SecurityQuestion[]
+
+  sessions Session[]
+
+  pendingAuths PendingAuth[]
+
+  securityEvents SecurityEvent[]
+
+  @@map("users")
+}
+
+model SecurityEvent {
+  id        String            @id @default(cuid())
+  type      SecurityEventType
+  userId    String?           @map("user_id")
+  user      User?             @relation(fields: [userId], references: [id])
+  email     String?
+  ipAddress String?           @map("ip_address")
+  detail    String?
+  createdAt DateTime          @default(now()) @map("created_at")
+
+  @@index([email, createdAt])
+  @@index([ipAddress, createdAt])
+  @@map("security_events")
+}
+
+enum PendingAuthPurpose {
+  TOTP_VERIFICATION
+  TOTP_ENROLLMENT
+}
+
+model PendingAuth {
+  id         String             @id @default(cuid())
+  userId     String             @map("user_id")
+  user       User               @relation(fields: [userId], references: [id])
+  tokenHash  String             @unique @map("token_hash")
+  purpose    PendingAuthPurpose
+  expiresAt  DateTime           @map("expires_at")
+  createdAt  DateTime           @default(now()) @map("created_at")
+
+  @@map("pending_auths")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  user         User     @relation(fields: [userId], references: [id])
+  tokenHash    String   @unique @map("token_hash")
+  expiresAt    DateTime @map("expires_at")
+  lastActiveAt DateTime @default(now()) @map("last_active_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("sessions")
+}
+
+model SecurityQuestion {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  user       User     @relation(fields: [userId], references: [id])
+  question   String
+  answerHash String   @map("answer_hash")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("security_questions")
+}
+
+model AdminPermissionGrant {
+  id           String           @id @default(cuid())
+  adminUserId  String           @map("admin_user_id")
+  adminUser    User             @relation(fields: [adminUserId], references: [id])
+  permission   AdminPermission
+  createdAt    DateTime         @default(now()) @map("created_at")
+
+  @@unique([adminUserId, permission])
+  @@map("admin_permission_grants")
+}
+
+model AdminAction {
+  id           String          @id @default(cuid())
+  adminId      String          @map("admin_id")
+  admin        User            @relation("AdminActionActor", fields: [adminId], references: [id])
+  actionType   AdminActionType @map("action_type")
+  targetUserId String?         @map("target_user_id")
+  targetUser   User?           @relation("AdminActionTarget", fields: [targetUserId], references: [id])
+  amount       Decimal?        @db.Decimal(24, 8)
+  reason       String?
+  createdAt    DateTime        @default(now()) @map("created_at")
+
+  @@map("admin_actions")
+}

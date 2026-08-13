@@ -16,6 +16,9 @@ const envSchema = z.object({
   // Rate placeholders — superseded by versioned config tables in Phase 2+.
   DEFAULT_DAILY_INTEREST_RATE_BP: z.coerce.number().nonnegative().default(0),
   DEFAULT_DIRECT_COMMISSION_RATE_BP: z.coerce.number().nonnegative().default(0),
+  // Main admin account created by `prisma db seed` — no defaults, must be set explicitly.
+  SEED_ADMIN_EMAIL: z.email(),
+  SEED_ADMIN_PASSWORD: z.string().min(8),
 });
 
 const parsed = envSchema.safeParse(process.env);

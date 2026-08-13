@@ -5,115 +5,87 @@
 > "Review" section filled in at the end so the human reviewer (Zac) can see what
 > happened without re-reading the whole transcript.
 
-## Phase: 0 — Foundation
+## Phase: 1 — Auth & Users (Task 9 of N: SCRUM-31, Phase 1 exit test)
 
-- [x] Scaffold Next.js 15 (App Router) + TypeScript + Tailwind CSS + shadcn/ui
-- [x] Set up next-intl: route-based `/en` and `/ar`, empty `messages/en.json` /
-      `messages/ar.json`, `dir="rtl"` wired to Arabic on root element, language
-      switcher stub in layout
-- [x] Docker Compose: `app`, `worker`, `postgres` (Postgres 16) services
-- [x] Initialize Prisma, verify connection to Postgres (empty schema is fine —
-      real models start Phase 1/2)
-- [x] Configure ESLint + Prettier + Vitest
-- [x] Add ESLint rule / documented checklist item flagging JS `number` for money
-      (invariant #1 enforcement starts now)
-- [x] `.env.example` committed, `.env` gitignored; typed config module exposing
-      `TIMEZONE` (`Asia/Dubai`, named zone not offset), `MIN_WITHDRAWAL` (50),
-      and rate placeholders
-- [x] Health check route: app status + DB reachability
-- [x] Worker service present in compose (no jobs yet — lands Phase 4)
-- [x] Run exit test: `docker compose up` → app running, DB reachable, health
-      check confirms both, `/en` and `/ar` render, `/ar` has `dir="rtl"`
-- [x] Show exit test output to Zac before marking phase complete
+- [x] Wrote `scripts/phase1-exit-test.ts` covering every clause of the exit
+      test in `/docs/phases/phase-01-auth-users.md`, calling the real library
+      functions for steps with no HTTP route yet (registration, security-
+      question reset, admin manual reset, route guard) and hitting the real
+      running dev server over HTTP for steps that do have routes (login,
+      logout, TOTP enroll/verify)
+- [x] Ran it against a live `npm run dev` instance and the real dev DB —
+      **all 15 steps passed**
+- [x] Fixed a script bug (not a product bug) where the lockout scenario's
+      failed attempts also tripped per-IP rate limiting for the subsequent,
+      unrelated admin-login scenario, since every request in the script
+      shares one source IP — added a targeted cleanup between scenarios
+- [x] Cleaned up all exit-test data after the run (test users, sessions,
+      security events, main admin's TOTP state reset back to null) —
+      verified via direct DB query
+- [x] Re-ran the full unit test suite after the exit test — still 82/82
 
 ## Review
 
-**Built:**
-- Next.js 15.5.23 (App Router, TS, Tailwind v4) scaffolded at repo root, merged
-  around existing `docs/`, `tasks/`, `CLAUDE.md`.
-- shadcn/ui initialized (`components.json`, `src/components/ui/button.tsx`,
-  `src/lib/utils.ts`).
-- next-intl: `src/app/[locale]/`, `src/i18n/{routing,navigation,request}.ts`,
-  `src/middleware.ts`, `messages/{en,ar}.json` (with a glossary comment noting
-  financial terms never translate), `dir` wired per-locale in
-  `[locale]/layout.tsx`, language switcher stub in the header.
-- `docker-compose.yml`: `app`, `worker`, `postgres:16` with a healthcheck-gated
-  dependency so app/worker wait for Postgres readiness. `docker/app.Dockerfile`,
-  `docker/worker.Dockerfile`.
-- Prisma initialized and **pinned to v6.19.3** (see decision below), empty
-  schema, `src/lib/prisma.ts` singleton, client generated successfully both
-  locally and inside the Docker image.
-- ESLint (flat config via `FlatCompat`, since this Next version's
-  `eslint-config-next` only ships legacy eslintrc-format configs), Prettier,
-  Vitest all configured and passing. Added a `no-restricted-syntax` ESLint rule
-  flagging `parseFloat()` and non-literal `Number()` calls as advisory nudges
-  toward invariant #1 (can't fully enforce "no JS number for money" via static
-  rule alone — documented as such in the rule's own message).
-- `src/lib/config.ts`: Zod-validated typed config exposing `TIMEZONE` (locked to
-  literal `"Asia/Dubai"`), `MIN_WITHDRAWAL` (default 50), and two rate
-  placeholders, explicitly commented that real rates come from versioned config
-  tables from Phase 2+ (invariant #6).
-- Health check at `/api/health`, outside the locale prefix, using tagged-template
-  `$queryRaw` (invariant #10).
-- `.env.example` committed, `.env` gitignored with an explicit `!.env.example`
-  negation (the Prisma-generated `.gitignore` used a blanket `.env*` that would
-  have excluded the example file too).
+**What the exit test script actually exercises, end to end, with real output
+shown to Zac (see chat transcript for the full run):**
 
-**Decision requiring a stop-and-ask:** `npx prisma init` pulled Prisma 7 (latest),
-which requires an explicit driver adapter, a new `prisma.config.ts`, and a
-generated-client output path — a bigger convention change than this
-Prisma-heavy, 13-phase project should absorb without discussion. Asked; you chose
-Prisma 6. Pinned `prisma`/`@prisma/client` to `6.19.3`, reverted to the
-conventional `schema.prisma` + `@prisma/client` import + `DATABASE_URL` env var
-setup.
+1. `registerAsRoot` — root user, `sponsorId` confirmed null.
+2. `registerWithSponsor` — a second user placed under the root's referral
+   link, `sponsorId` confirmed to equal the root's id.
+3. A third user registered under the same referral link (satisfies "register
+   two users, one under the other's referral link... register a third" —
+   read literally as 2 referred + 1 root = 3 total self-registrations).
+4–5. Real HTTP login (`POST /api/auth/login`) as both the root and the
+   referred user — real `Set-Cookie` with `Secure; HttpOnly; SameSite=strict`
+   flags confirmed in the response.
+6. `requirePermission`/`requireAdmin` reject a request with no valid admin
+   session (`AuthError`, 401) — since no admin *routes* exist yet (Phase 6),
+   this exercises the actual guard mechanism directly rather than an HTTP
+   404, which is the correct thing to test: the guard itself, not routing.
+7. `resetPasswordViaSecurityQuestions` — root user resets their own password
+   with the 3 answers set at registration, then logs in with the new
+   password over real HTTP.
+8. `adminResetPassword` — main admin resets the referred user's password;
+   confirmed the `admin_actions` row (`actionType: PASSWORD_RESET`, correct
+   `adminId`/`targetUserId`/`reason`) and that the new password works via
+   real HTTP login.
+9. `requirePermission` called for all 11 catalog permissions against the
+   main admin's real session token — confirmed `admin_permission_grants`
+   has **zero** rows for this admin, yet every permission check passes
+   (`is_main_admin` short-circuit, invariant #8).
+10. 5 wrong-password HTTP login attempts, then a 6th with the *correct*
+    password — still rejected (429, distinct lockout message, no cookie
+    set), with the `ACCOUNT_LOCKED` `security_events` row shown as evidence
+    it's a visible event, not a silent failure.
+11–15. Main admin's TOTP reset to null → real HTTP login → correctly returns
+    `totp_enrollment_required` (no session) → real enrollment via
+    `/api/auth/totp/enroll` + `/confirm` with a genuinely-computed TOTP code
+    → logged out → second login now returns `totp_required` (not
+    re-enrollment) → wrong code rejected (401, no cookie) → correct code
+    creates a real session with correct cookie flags.
 
-**Mistake caught and fixed (logged in `tasks/lessons.md`):** while cleaning up
-stray files `prisma init` wrote into `.claude/skills/`, briefly deleted two
-already-committed skill files (`bilingual-rtl`, `money-precision`) that weren't
-scaffolding byproducts. Caught via `git status` before finishing and restored
-with `git checkout --`.
+**Bug found and fixed (script-only, not product code):** the lockout
+scenario (step 10) and the TOTP scenario (steps 11-15) both run from the
+same script process, so they share one source IP. The per-IP rate limit from
+step 10's 5 failures was still active when step 11 tried to log in as the
+admin, causing a false failure. Fixed by clearing `LOGIN_FAILED`/
+`ACCOUNT_LOCKED` security events between the two scenarios — this is a
+test-harness artifact of running everything from one script/IP, not a
+product defect (in reality these would be different users from different
+IPs).
 
-**Exit test — actually run, output below:**
+**Full exit test output:** shown in the conversation — all 15 steps printed
+their real response bodies, cookies, and DB rows, ending in
+`=== ALL PHASE 1 EXIT TEST STEPS PASSED ===`.
 
-```
-$ docker compose up --build -d
-...
- Container investment_hub-postgres-1 Healthy
- Container investment_hub-app-1 Started
- Container investment_hub-worker-1 Started
+**Cleanup verified:** `SELECT count(*) FROM users WHERE email LIKE
+'exit-%@test.local'` → 0. Main admin's `totp_secret` confirmed null again
+after the script's cleanup ran. Full unit suite re-run afterward: 82/82
+still passing, confirming the exit-test run didn't leave the DB in a state
+that broke anything else.
 
-$ docker compose ps
-NAME                        STATUS
-investment_hub-app-1        Up (0.0.0.0:3000->3000/tcp)
-investment_hub-postgres-1   Up (healthy) (0.0.0.0:5432->5432/tcp)
-investment_hub-worker-1     Up
-
-$ curl -s http://localhost:3000/api/health
-{"status":"ok","database":"reachable"}
-
-$ curl -s -D - http://localhost:3000/en -o /tmp/en.html
-HTTP/1.1 200 OK
-<html lang="en" dir="ltr" ...>
-<h1>Investment Hub</h1>
-
-$ curl -s -D - http://localhost:3000/ar -o /tmp/ar.html
-HTTP/1.1 200 OK
-<html lang="ar" dir="rtl" ...>
-<h1>Investment Hub</h1>
-
-$ curl -s -D - -o /dev/null http://localhost:3000/
-HTTP/1.1 307 Temporary Redirect
-location: /en
-```
-
-Local checks also run and passing before the Docker test: `npx tsc --noEmit`
-(clean), `npx eslint .` (clean), `npx vitest run` (1/1 passing), `npx prettier
---check .` (clean on all app source).
-
-**What to double-check by hand:** the stack is currently still running
-(`docker compose up -d`) — stop it with `docker compose down` when done
-reviewing, or ask me to. The 3 `npm audit` high-severity warnings are all in
-`postcss`/`sharp`, transitively bundled inside Next 15.5.23's build tooling;
-fixing them requires jumping to Next 16, which conflicts with this phase's
-pinned Next 15 requirement — left as-is, flagging for awareness rather than
-silently overriding the version pin.
+**Phase 1 status:** every deliverable in the phase brief has a task behind
+it (SCRUM-23 through SCRUM-29) and the exit test — run for real, not
+inspected — passes end to end. Awaiting Zac's confirmation in the
+operation-room chat before Phase 2 starts, per the build order rule in
+CLAUDE.md.
