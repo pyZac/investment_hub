@@ -34,6 +34,7 @@ afterAll(async () => {
   });
   await prisma.adminPermissionGrant.deleteMany({ where: { adminUserId: { in: createdUserIds } } });
   await prisma.securityQuestion.deleteMany({ where: { userId: { in: createdUserIds } } });
+  await prisma.walletAccount.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
   await prisma.$disconnect();
 });

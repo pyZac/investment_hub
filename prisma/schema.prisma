@@ -34,6 +34,7 @@ enum AdminPermission {
 enum AdminActionType {
   USER_CREATED
   PASSWORD_RESET
+  CREDIT_ISSUANCE
 }
 
 enum SecurityEventType {
@@ -84,7 +85,90 @@ model User {
 
   securityEvents SecurityEvent[]
 
+  ledgerEntries LedgerEntry[]
+
+  walletAccounts WalletAccount[]
+
   @@map("users")
+}
+
+enum Wallet {
+  A
+  B
+  C
+  SAVING
+  SYSTEM_EXTERNAL
+}
+
+enum LedgerDirection {
+  CREDIT
+  DEBIT
+}
+
+enum LedgerEntryType {
+  ADMIN_CREDIT
+  PACKAGE_PURCHASE
+  DAILY_INTEREST
+  DIRECT_COMMISSION
+  DIRECT_SAVING
+  BINARY_COMMISSION
+  RANK_REWARD
+  WITHDRAWAL_OUT
+  WITHDRAWAL_IN
+  CAPITAL_RELEASE
+  SAVING_UNLOCK
+  ADMIN_ADJUSTMENT
+}
+
+model LedgerEntry {
+  id     String  @id @default(cuid())
+  userId String? @map("user_id")
+  user   User?   @relation(fields: [userId], references: [id])
+
+  wallet    Wallet
+  direction LedgerDirection
+  amount    Decimal @db.Decimal(24, 8)
+
+  entryType LedgerEntryType @map("entry_type")
+
+  referenceType String? @map("reference_type")
+  referenceId   String? @map("reference_id")
+
+  comment String?
+
+  idempotencyKey String @map("idempotency_key")
+
+  metadata Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Uniqueness on (idempotency_key, user_id, wallet, direction) is enforced by
+  // a hand-written expression index in the
+  // 20260813120000_ledger_composite_idempotency_key migration, using
+  // COALESCE(user_id, 'SYSTEM_EXTERNAL') — Postgres treats every NULL as
+  // distinct in a plain unique index, which would let two SYSTEM_EXTERNAL rows
+  // (user_id IS NULL) with the same key/wallet/direction silently bypass
+  // uniqueness. Prisma can't express a functional/expression index in the
+  // schema DSL, so it is NOT declared here as @@unique — doing so would make
+  // `prisma migrate dev`/`db push` try to (re)create a plain-column index that
+  // conflicts with the real one. Do not add @@unique for this combination.
+  @@index([userId, wallet])
+  @@index([referenceType, referenceId])
+  @@map("ledger_entries")
+}
+
+model WalletAccount {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id])
+
+  type    Wallet
+  balance Decimal @default(0) @db.Decimal(24, 8)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([userId, type])
+  @@map("wallets")
 }
 
 model SecurityEvent {

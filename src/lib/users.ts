@@ -2,6 +2,7 @@ import { z } from "zod";
 import { prisma } from "./prisma";
 import { hashPassword } from "./password";
 import { securityQuestionInputSchema, type SecurityQuestionInput } from "./security-questions";
+import { createWalletsForUser } from "./wallets";
 
 const registrationInputSchema = z.object({
   email: z.email(),
@@ -55,6 +56,8 @@ export async function registerWithSponsor(sponsorId: string, input: Registration
       data: hashedQuestions.map((q) => ({ userId: user.id, ...q })),
     });
 
+    await createWalletsForUser(tx, user.id);
+
     return user;
   });
 }
@@ -82,6 +85,8 @@ export async function registerAsRoot(input: RegistrationInput) {
     await tx.securityQuestion.createMany({
       data: hashedQuestions.map((q) => ({ userId: user.id, ...q })),
     });
+
+    await createWalletsForUser(tx, user.id);
 
     return user;
   });
@@ -155,6 +160,8 @@ export async function adminCreateUser(actingAdminId: string, input: AdminCreateU
         reason: data.reason,
       },
     });
+
+    await createWalletsForUser(tx, user.id);
 
     return user;
   });
