@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Prisma } from "@prisma/client";
-import { toDisplay } from "./display";
+import { toDisplay, formatDate } from "./display";
 
 describe("toDisplay", () => {
   it("formats a standard value to 2 decimal places", () => {
@@ -42,5 +42,25 @@ describe("toDisplay", () => {
     toDisplay(original);
 
     expect(original.toString()).toBe(originalString);
+  });
+});
+
+describe("formatDate", () => {
+  const date = new Date("2026-08-15T10:00:00.000Z");
+
+  it("formats in English with Western numerals", () => {
+    expect(formatDate(date, "en")).toMatch(/^[A-Za-z0-9 ,]+$/);
+  });
+
+  it("formats in Arabic without any Eastern Arabic numerals", () => {
+    const formatted = formatDate(date, "ar");
+    expect(formatted).not.toMatch(/[٠-٩]/);
+  });
+
+  it("uses Western digits for the day/year in both locales", () => {
+    const en = formatDate(date, "en");
+    const ar = formatDate(date, "ar");
+    expect(en).toMatch(/2026/);
+    expect(ar).toMatch(/2026/);
   });
 });

@@ -6,5 +6,42 @@
   },
   "HomePage": {
     "title": "Investment Hub"
+  },
+  "Packages": {
+    "pageTitle": "Investment Packages",
+    "pageDescription": "Choose a package to turn your Wallet B credit into an active investment.",
+    "walletBBalance": "Wallet B balance",
+    "purchase": "Purchase",
+    "purchasing": "Purchasing…",
+    "emptyState": "No packages are available for purchase right now.",
+    "confirmTitle": "Confirm purchase",
+    "confirmDescription": "This will debit {amount} from your Wallet B and credit it to Wallet A.",
+    "confirmPackageLabel": "Package",
+    "confirmAmountLabel": "Amount",
+    "confirmYourBalance": "Your Wallet B balance",
+    "confirmCancel": "Cancel",
+    "confirmSubmit": "Confirm purchase",
+    "successTitle": "Purchase complete",
+    "successDescription": "Your investment is now active.",
+    "errorInsufficientFunds": "Your Wallet B balance is not enough to purchase this package.",
+    "errorPackageUnavailable": "This package is no longer available for purchase.",
+    "errorGeneric": "Something went wrong while processing your purchase. Please try again."
+  },
+  "Investments": {
+    "pageTitle": "My Investments",
+    "pageDescription": "Track your active investments and their upcoming unlock dates.",
+    "purchasedOn": "Purchased on",
+    "amountLabel": "Amount",
+    "profitStartsLabel": "Profit start",
+    "capitalUnlocksLabel": "Capital unlock",
+    "profitStartsInDays": "Starts in {days, plural, =1 {1 day} other {# days}}",
+    "profitAccruing": "Profit accruing",
+    "capitalUnlocksInDays": "Unlocks in {days, plural, =1 {1 day} other {# days}}",
+    "capitalUnlocked": "Unlocked",
+    "statusActive": "Active",
+    "statusCapitalReleased": "Capital released",
+    "emptyStateTitle": "No investments yet",
+    "emptyStateDescription": "Browse available packages to make your first investment.",
+    "browsePackages": "Browse packages"
   }
 }

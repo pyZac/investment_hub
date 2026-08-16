@@ -183,3 +183,94 @@ to reset: hand-write the next migration folder/SQL directly and apply with
 `prisma migrate deploy`, which doesn't do checksum-drift verification. Once a
 migration has been hand-edited post-apply, use `migrate deploy` (not `migrate
 dev`) for all subsequent migrations in this project.
+
+## 2026-08-15 — Phase 3
+Mistake: none by me, but a real environment gotcha hit while manually
+verifying SCRUM-45's purchase page in-browser. The `app` container's
+`node_modules` and `@prisma/client` are anonymous Docker volumes
+(`docker-compose.yml`'s `- /app/node_modules`), separate from the host's. Host
+`npm install`/`prisma generate` since the container was first built never
+propagated in, so `/api/auth/login` 404'd (Next's router silently skipped a
+route whose import chain failed) until traced to `Module not found: 'argon2'`
+in the container, then a second failure (`Cannot read properties of
+undefined (reading 'findFirst')`) until `npx prisma generate` was also rerun
+inside the container.
+Rule: whenever manually verifying a page/route in the running `app` container
+after adding a dependency or changing schema, run `docker compose exec app
+npm install` and `docker compose exec app npx prisma generate` (then `docker
+compose restart app`) first if anything 404s unexpectedly or throws on a
+route that clearly exists — don't assume host-side `npm install`/`prisma
+generate` reached the container. This is a known standing quirk of this
+project's dev setup, not something to re-diagnose from scratch each time.
+
+## 2026-08-15 — Phase 3
+Mistake: found 4 leftover `Test-<uuid>` rows in the real dev `packages` table
+(interrupted `packages.test.ts` run left them behind despite that file's
+`afterAll` cleanup existing) — they were visible on the actual SCRUM-45
+packages page during design review, not just in test runs.
+Rule: a test file having `afterAll` cleanup isn't a guarantee against
+leftover data if a run crashes/is killed mid-suite — periodically sanity
+-check real product-facing tables (especially ones a human reviews visually,
+like `packages`) for lingering test artifacts before a design/demo session,
+not just during dedicated cleanup passes.
+
+## 2026-08-15 — Phase 3 (SCRUM-45)
+Mistake: after a successful purchase on the packages page, the displayed
+Wallet B balance stayed stale until a manual browser reload. Root cause: the
+page (`src/app/[locale]/packages/page.tsx`) is a Server Component that reads
+`getWalletBalance` once at render time and passes it down as a prop; the
+server action (`purchasePackageAction`) wrote the new balance to the DB but
+never told Next.js the route's cached render was now stale, so the
+already-mounted client tree kept showing its original props indefinitely.
+Rule: any server action that mutates data a currently-rendered page displays
+must call `revalidatePath(...)` (or `revalidateTag` if the data is fetched via
+a tagged cache entry) for the exact affected path before returning success —
+this is not optional polish, a mutation with no revalidation call is an
+incomplete implementation. Fix applied here: `purchasePackageAction` takes a
+`locale` param from the client (via next-intl's `useLocale()`) and calls
+`revalidatePath(`/${locale}/packages`)` right after `purchasePackage`
+succeeds, so Next re-renders the Server Component and pushes fresh props
+(updated wallet balance, updated purchasable-package list) to the already
+-mounted client component with no manual reload. Apply this same pattern from
+the start for every future action that changes wallet balances or list
+contents a page displays — withdrawals, transfers, admin credit, package
+CRUD's effect on the admin package list, etc. — don't wait for a bug report to
+add it retroactively.
+
+## 2026-08-15 — Phase 3 (SCRUM-45)
+Mistake: two related RTL layout bugs shipped in the first review pass of the
+purchase confirmation dialog, both from the same root cause — relying on
+`dir="rtl"` alone instead of using explicit logical layout:
+1. The success state's checkmark icon + "Purchase complete" text rendered
+   stacked (icon above text) instead of as a horizontal pair, because it sat
+   inside `DialogTitle`/`DialogHeader` with no explicit horizontal flex
+   wrapper — `flex-col`/block stacking has no direction concept at all, so
+   this wasn't even an RTL-specific bug, just a missing `flex-row`, but it
+   only got caught during the Arabic pass.
+2. The dialog's × close button (shared shadcn primitive,
+   `src/components/ui/dialog.tsx`) used a **physical** Tailwind class,
+   `absolute top-2 right-2` — pinned to the physical right edge in both
+   locales. In the English (LTR) dialog this happens to be the visually
+   correct corner, masking the bug; in Arabic (RTL) it should mirror to the
+   opposite visual corner but stayed physically right, reading as
+   overlapping/cramped against the title instead of mirroring.
+Rule: any icon+text pairing (buttons, badges, toasts/dialogs, list items)
+needs an explicit `flex flex-row items-center gap-<n>` wrapper — never rely on
+default block/inline flow to keep them horizontally paired. Any
+absolutely-positioned element anchored to a horizontal edge (close buttons,
+corner badges, floating action buttons) must use Tailwind's **logical** inset
+utilities — `start-*`/`end-*` (`inset-inline-start`/`inset-inline-end`) —
+never physical `left-*`/`right-*`, so it automatically mirrors under
+`dir="rtl"` with zero extra code. Fix applied here:
+`className="absolute top-2 right-2"` → `className="absolute top-2 end-2"` in
+`dialog.tsx` (a shared primitive, so this fixes every dialog in the app, not
+just this page) plus `flex flex-row items-center gap-2` on the success
+`DialogTitle`'s icon+text wrapper. Add this as a specific item in the
+bilingual-rtl skill's verification pass: when checking a screen in `/ar`,
+explicitly inspect every icon+text pair and every absolutely-positioned
+corner element, not just check that visible strings are translated — this
+category of bug is invisible in a translation-only review and only shows up
+on a real side-by-side `/en` vs `/ar` visual comparison. Expect many more
+icon+text pairs in Phase 10/11's dashboards; check for physical
+`left-*`/`right-*`/`ml-*`/`mr-*`/`pl-*`/`pr-*`/`text-left`/`text-right` on any
+new component before it ships, not after a bug report.

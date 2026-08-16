@@ -6,5 +6,42 @@
   },
   "HomePage": {
     "title": "Investment Hub"
+  },
+  "Packages": {
+    "pageTitle": "باقات الاستثمار",
+    "pageDescription": "اختر باقة لتحويل رصيد Wallet B إلى استثمار نشط.",
+    "walletBBalance": "رصيد Wallet B",
+    "purchase": "شراء",
+    "purchasing": "جارٍ الشراء…",
+    "emptyState": "لا توجد باقات متاحة للشراء حاليًا.",
+    "confirmTitle": "تأكيد الشراء",
+    "confirmDescription": "سيتم خصم {amount} من Wallet B وإضافتها إلى Wallet A.",
+    "confirmPackageLabel": "الباقة",
+    "confirmAmountLabel": "المبلغ",
+    "confirmYourBalance": "رصيدك في Wallet B",
+    "confirmCancel": "إلغاء",
+    "confirmSubmit": "تأكيد الشراء",
+    "successTitle": "تم الشراء بنجاح",
+    "successDescription": "استثمارك أصبح نشطًا الآن.",
+    "errorInsufficientFunds": "رصيدك في Wallet B غير كافٍ لشراء هذه الباقة.",
+    "errorPackageUnavailable": "هذه الباقة لم تعد متاحة للشراء.",
+    "errorGeneric": "حدث خطأ أثناء معالجة عملية الشراء. الرجاء المحاولة مرة أخرى."
+  },
+  "Investments": {
+    "pageTitle": "استثماراتي",
+    "pageDescription": "تابع استثماراتك النشطة ومواعيد فتحها القادمة.",
+    "purchasedOn": "تاريخ الشراء",
+    "amountLabel": "المبلغ",
+    "profitStartsLabel": "بداية الربح",
+    "capitalUnlocksLabel": "فتح رأس المال",
+    "profitStartsInDays": "يبدأ خلال {days, plural, zero {0 يوم} one {يوم واحد} two {يومين} few {# أيام} many {# يومًا} other {# يوم}}",
+    "profitAccruing": "الربح متراكم",
+    "capitalUnlocksInDays": "يُفتح خلال {days, plural, zero {0 يوم} one {يوم واحد} two {يومين} few {# أيام} many {# يومًا} other {# يوم}}",
+    "capitalUnlocked": "مفتوح",
+    "statusActive": "نشط",
+    "statusCapitalReleased": "تم تحرير رأس المال",
+    "emptyStateTitle": "لا توجد استثمارات بعد",
+    "emptyStateDescription": "تصفح الباقات المتاحة لإجراء أول استثمار لك.",
+    "browsePackages": "تصفح الباقات"
   }
 }
