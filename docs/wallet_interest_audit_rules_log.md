@@ -30,7 +30,11 @@
 ## 2. Interest Calculation (Wallet A)
 
 - Interest is **5% per month** (current global rate, admin-editable — see Section 1), but distributed **daily**:
-  - Daily rate = current monthly rate ÷ (number of days in the current calendar month)
+  - Daily rate = current monthly rate ÷ (number of days in the current calendar month, excluding Fridays)
+  - This means the full monthly rate is realized by month's end, since Fridays are
+    genuinely paused rather than causing a shortfall — this was a deliberate decision,
+    not the platform's original default. Do not change this divisor without an
+    explicit decision logged here.
   - Each day, that daily slice is credited into Wallet A
   - Purpose: user sees visible daily profit growth (motivational UX)
 - **Interest base** = current balance in Wallet A (capital + all profit accrued so far)

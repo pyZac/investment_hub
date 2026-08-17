@@ -290,6 +290,47 @@ model Investment {
   @@map("investments")
 }
 
+model InterestRateConfig {
+  id            String    @id @default(cuid())
+  monthlyRate   Decimal   @map("monthly_rate") @db.Decimal(24, 8)
+  effectiveFrom DateTime  @map("effective_from")
+  effectiveTo   DateTime? @map("effective_to")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Enforces "exactly one active rate at any moment" (Decision 4) at the DB
+  // level: a partial unique index on a constant expression WHERE
+  // effective_to IS NULL, hand-written across the
+  // 20260816120000_add_interest_rate_config and
+  // 20260816121500_fix_interest_rate_config_one_active_index migrations
+  // (indexing effective_to itself doesn't work — NULL is never equal to NULL,
+  // even in a partial index, so it can't catch a second active row). Prisma's
+  // DSL can't express this, so it is NOT declared as @@unique here.
+  @@map("interest_rate_config")
+}
+
+enum JobRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model JobRun {
+  id          String       @id @default(cuid())
+  jobType     String       @map("job_type")
+  periodKey   String       @map("period_key")
+  status      JobRunStatus
+  startedAt   DateTime     @map("started_at")
+  completedAt DateTime?    @map("completed_at")
+  error       String?
+
+  // Catch-up logic (Decision 2) asks "what periods are unprocessed?", never
+  // "what is today?". One row per (job_type, period_key) — a period is only
+  // ever retried in place (RUNNING -> COMPLETED/FAILED), never duplicated.
+  @@unique([jobType, periodKey])
+  @@map("job_runs")
+}
+
 model AdminAction {
   id              String          @id @default(cuid())
   adminId         String          @map("admin_id")

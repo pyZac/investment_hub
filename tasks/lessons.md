@@ -214,6 +214,148 @@ leftover data if a run crashes/is killed mid-suite — periodically sanity
 like `packages`) for lingering test artifacts before a design/demo session,
 not just during dedicated cleanup passes.
 
+## 2026-08-16 — Phase 4 (SCRUM-48)
+Mistake: wrote `interest_rate_config`'s "only one active rate" constraint as a
+partial unique index directly on the nullable column —
+`CREATE UNIQUE INDEX ... ON interest_rate_config (effective_to) WHERE
+effective_to IS NULL`. This looks correct (and matches how the Phase 2 ledger
+fix reasons about NULLs) but doesn't work: Postgres treats every NULL as
+distinct for uniqueness even inside a partial index, and indexing a column
+that is NULL on every matching row can never catch a second NULL — verified
+by inserting three concurrent `effective_to IS NULL` rows with zero
+conflicts. Caught by deliberately testing the constraint (inserting a second
+active row) rather than assuming a valid-looking index definition worked.
+Rule: a partial unique index meant to enforce "at most one row" needs a
+unique index on a **constant expression** (e.g. `((TRUE))`), not on the
+nullable column itself — the `WHERE` clause does the filtering, the indexed
+expression just needs to be the same non-null value on every qualifying row
+so a second row's insert actually collides. Always insert a second
+would-violate row by hand (not just trust `\d tablename` showing the index
+exists and is valid) before treating any new UNIQUE constraint as verified —
+"the index exists" and "the index enforces what I intended" are different
+claims, especially with NULLs involved (this is the second time NULL
+semantics broke an intended uniqueness guarantee in this project — see the
+Phase 2 ledger entry above).
+
+## 2026-08-16 — Phase 4 (SCRUM-51)
+Mistake: `runDailyInterestCatchUp`'s fallback for "no prior job_runs row exists
+yet" was a hardcoded `JOB_EPOCH = 2026-01-01`, chosen without checking it
+against `interest_rate_config`'s actual seeded `effective_from`
+(2026-08-16, whenever SCRUM-48's migration was run) — so a first-ever
+catch-up call walked back to January and hit "no active interest rate" for
+every date before the config seed. This wasn't caught by the test's `expect`
+assertions (which used explicit dates near the tested gap) but surfaced as
+~220 leftover `job_runs` rows spanning 2026-01-01 through 2026-08-08 in the
+shared dev DB after a mid-development test run crashed before its `afterEach`
+cleanup ran — a stray full-suite run later would have silently inherited this
+as "last completed period" state and skewed catch-up math for every
+subsequent test in the file.
+Rule: (1) any hardcoded epoch/fallback date in catch-up-style logic needs to
+be checked against real seeded config data it will look up, not chosen
+independently; (2) prefer seeding an explicit prior-COMPLETED `job_runs`
+baseline row in each test (per the specific gap being tested) over relying on
+a global epoch fallback, both because it's more realistic (production
+catch-up logic only matters after the job has run at least once) and because
+it keeps each test's date range self-contained; (3) after any test run that
+errors/crashes before reaching its `afterEach`/`afterAll`, explicitly check
+the tables that test writes to for leftover rows before trusting the DB is
+clean again — a crash mid-suite bypasses cleanup the same way a killed
+process does (see the Phase 3 packages-table lesson above), and this applies
+even to jobs/tables introduced in the same session, not just older ones.
+
+## 2026-08-16 — Phase 4 (SCRUM-52)
+Mistake: the SCRUM-51 lesson above already flagged that a hardcoded
+`JOB_EPOCH` fallback for "no prior job_runs row" was fragile, but the actual
+fix I applied there only made the epoch closer to the config seed date — it
+didn't remove the backward-walk design itself. Manually triggering
+`runDailyInterestCatchUp` against the real dev environment (as this task
+required, not just running the test suite) immediately reproduced the same
+class of bug live: with zero job_runs history, it walked back to
+`JOB_EPOCH` and created 228 rows through today, "succeeding" only because
+both real dev investments' `profitStartsAt` was still in the future (so
+`accrueDailyInterestForInvestment` skipped before ever calling `dailyRate`,
+masking what would otherwise have been 228 "no active interest rate config"
+errors for dates before the config's real seed date).
+Rule: catch-up logic's "no history yet" case is not "assume some safe-ish
+starting epoch" — it is "there is nothing to catch up on; today is the only
+period." A job that has never run before was never "missed" for any prior
+day, by definition (there's no prior successful run to have fallen behind
+from). This is now a general rule for this project: any job_runs-style
+catch-up bootstrap should default the walk-back start to `today` when no
+prior COMPLETED row exists, never to a fixed calendar date, even one that
+looks safely in the past. Also: **manually exercising a job against the real
+dev DB is not optional verification** — this bug was invisible in the test
+suite (tests always seed an explicit baseline row before calling the
+function, per the SCRUM-51 lesson) and only surfaced when actually run
+live, which is exactly why this task's instructions required a live manual
+trigger, not just green tests, before considering it done.
+
+## 2026-08-16 — Phase 4 (SCRUM-54)
+Mistake #1: the Phase 4 exit test (a 90-fabricated-day run calling the real
+`runDailyInterestCatchUp`) swept in the two real pre-existing dev investments
+alongside the test's own — because that function correctly queries every
+`status: "ACTIVE"` investment in the DB, not just ones a test created, and
+this shared dev DB has no isolated test DB (per the earlier Phase 2 lesson).
+The real investments' `profit_starts_at` fell inside the test's fabricated
+90-day window, so they received real (fabricated-date) interest credits,
+corrupting one real user's Wallet A cached balance to ~511 million before
+being caught and manually repaired (delete the polluting ledger rows,
+recompute the cached balance from the remaining real ledger sum, verify
+`SUM(ledger) == wallets.balance` again). Happened twice in a row — the first
+repair didn't yet include the fix, so the second run reproduced it.
+Rule: any test that exercises a function operating on "every X in the
+system" (not scoped to IDs the test created) — cron-catch-up jobs, global
+reconciliation-style queries — must neutralize pre-existing real data for its
+own duration if it shares a DB with real state, not just clean up its own
+created rows afterward. Here: suspend (`suspendedAt`) every other user with
+an ACTIVE investment before running, restore exactly those users afterward
+(never a blanket "unsuspend everyone", which could wrongly reinstate an
+already-suspended real user). Always re-verify `SUM(ledger) ==
+wallets.balance` for affected real users after any manual repair, not just
+delete the bad rows and assume the cached balance self-corrects (it doesn't
+— `wallets.balance` is only ever updated by `postTransaction`, so a direct
+`DELETE` on `ledger_entries` always needs a matching manual balance fix).
+
+Mistake #2: the exit test's own verification query
+(`prisma.ledgerEntry.aggregate({ where: { referenceType, referenceId,
+entryType: "DAILY_INTEREST" }, _sum: { amount } })`) omitted `wallet: "A",
+direction: "CREDIT"`. Since DAILY_INTEREST writes a paired SYSTEM_EXTERNAL
+DEBIT entry tagged with the *same* `referenceType`/`referenceId` (both sides
+of the double-entry pair reference the investment), the unfiltered aggregate
+summed both the CREDIT and DEBIT amounts — which are equal — producing
+exactly 2x the correct total. The real engine code
+(`daily-interest.ts`'s own `priorInterest` lookup) already had the correct
+`wallet: "A", direction: "CREDIT"` filter; only the test's independent
+verification query was missing it, so this was a test bug, not an engine
+bug — confirmed by manually re-summing the same rows in JS and getting the
+correct (undoubled) total.
+Rule: **any query that sums ledger_entries by `referenceType`/`referenceId`
+alone must also filter `wallet` and `direction`**, because those reference
+fields intentionally tag both sides of a double-entry pair, not just the
+"primary" side — this is true anywhere in the codebase, not just tests. When
+a computed total is suspiciously exactly 2x (or 0.5x) an expected value,
+check for a missing direction/wallet filter on an aggregate before assuming
+the underlying business logic is wrong.
+
+Mistake #3 (design correction, not a bug): a pure 90-day compounding
+reference computed with full (unrounded) Prisma.Decimal precision diverged
+from the real system's output at the 5th decimal place after ~72 compounding
+steps, because the real system stores and re-reads each day's credited
+amount from a `NUMERIC(24,8)` column — rounding to 8dp — before using it as
+the next day's compounding base, while the unrounded reference carried full
+precision throughout. Fixed by rounding each day's computed interest to 8
+decimals (`ROUND_HALF_UP`, confirmed empirically to match Postgres's own
+`numeric(24,8)` cast rounding behavior) inside the reference simulation
+itself, matching what the real persisted system actually does.
+Rule: an independent reference for a system that persists intermediate
+values in a fixed-precision column must round at the same points the real
+system rounds, or the two will genuinely diverge over many compounding
+steps — this is not decimal.js precision-setting relevant (that only
+prevents *the reference's own* precision cliff from 20 default significant
+digits; it doesn't make the reference match a rounding-per-step system,
+which requires deliberately replicating the rounding, not just having more
+of it).
+
 ## 2026-08-15 — Phase 3 (SCRUM-45)
 Mistake: after a successful purchase on the packages page, the displayed
 Wallet B balance stayed stale until a manual browser reload. Root cause: the
