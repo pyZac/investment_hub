@@ -3,9 +3,9 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { postTransaction } from "./ledger-transaction";
 import { registerAsRoot } from "./users";
+import { cleanupLedgerEntriesForUsers } from "./test-helpers";
 
 const createdUserIds: string[] = [];
-const createdEntryIds: string[] = [];
 
 const sampleQuestions = [
   { question: "First pet's name?", answer: "Fluffy" },
@@ -24,19 +24,8 @@ async function makeUser() {
   return user;
 }
 
-async function disableDeleteTrigger() {
-  await prisma.$executeRawUnsafe(`ALTER TABLE "ledger_entries" DISABLE TRIGGER ledger_entries_no_delete`);
-}
-
-async function enableDeleteTrigger() {
-  await prisma.$executeRawUnsafe(`ALTER TABLE "ledger_entries" ENABLE TRIGGER ledger_entries_no_delete`);
-}
-
 afterAll(async () => {
-  await disableDeleteTrigger();
-  await prisma.ledgerEntry.deleteMany({ where: { userId: { in: createdUserIds } } });
-  await prisma.ledgerEntry.deleteMany({ where: { id: { in: createdEntryIds } } });
-  await enableDeleteTrigger();
+  await cleanupLedgerEntriesForUsers(createdUserIds);
   await prisma.securityQuestion.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.walletAccount.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
@@ -58,7 +47,6 @@ describe("postTransaction", () => {
 
     const entries = await prisma.ledgerEntry.findMany({ where: { idempotencyKey } });
     expect(entries).toHaveLength(2);
-    for (const e of entries) createdEntryIds.push(e.id);
 
     const credit = entries.find((e) => e.direction === "CREDIT")!;
     const debit = entries.find((e) => e.direction === "DEBIT")!;
@@ -110,7 +98,6 @@ describe("postTransaction", () => {
 
     const rows = await prisma.ledgerEntry.findMany({ where: { idempotencyKey } });
     expect(rows).toHaveLength(2);
-    for (const e of rows) createdEntryIds.push(e.id);
 
     const walletB = await prisma.walletAccount.findUniqueOrThrow({
       where: { userId_type: { userId: user.id, type: "B" } },
@@ -131,7 +118,6 @@ describe("postTransaction", () => {
     });
 
     const rows = await prisma.ledgerEntry.findMany({ where: { idempotencyKey } });
-    for (const e of rows) createdEntryIds.push(e.id);
 
     const systemExternalEntry = rows.find((e) => e.wallet === "SYSTEM_EXTERNAL")!;
     expect(systemExternalEntry.userId).toBeNull();

@@ -3,7 +3,7 @@ import { prisma } from "./prisma";
 import { postTransaction } from "./ledger-transaction";
 import { dailyRate, isFriday } from "./interest-rate";
 
-export type AccrualSkipReason = "before_profit_start" | "friday" | "owner_suspended";
+export type AccrualSkipReason = "before_profit_start" | "friday" | "owner_suspended" | "capital_released";
 
 export type AccrualResult =
   | { skipped: true; reason: AccrualSkipReason; alreadyProcessed?: undefined; amount?: undefined }
@@ -31,6 +31,13 @@ function dateKey(forDate: Date): string {
  * investment.id`) — never the user's combined Wallet A balance across all
  * their investments. This is what makes daily interest compound per
  * investment rather than per user.
+ *
+ * Checks `investment.status` itself (not just relying on callers to
+ * pre-filter): a CAPITAL_RELEASED investment stops earning permanently, per
+ * SCRUM-59 (see wallet_interest_audit_rules_log.md Section 3c). The daily
+ * catch-up job also filters to ACTIVE investments before calling this at
+ * all, but this function enforces the invariant independently so it holds
+ * for any caller, not just the one that currently exists.
  */
 export async function accrueDailyInterestForInvestment(
   investmentId: string,
@@ -41,6 +48,9 @@ export async function accrueDailyInterestForInvestment(
     include: { user: true },
   });
 
+  if (investment.status === "CAPITAL_RELEASED") {
+    return { skipped: true, reason: "capital_released" };
+  }
   if (forDate < investment.profitStartsAt) {
     return { skipped: true, reason: "before_profit_start" };
   }

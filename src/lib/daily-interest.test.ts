@@ -96,6 +96,7 @@ describe("accrueDailyInterestForInvestment", () => {
     );
 
     expect(result.skipped).toBe(true);
+    if (!result.skipped) throw new Error("unreachable");
     expect(result.reason).toBe("before_profit_start");
 
     const entries = await prisma.ledgerEntry.findMany({
@@ -114,6 +115,7 @@ describe("accrueDailyInterestForInvestment", () => {
     const result = await accrueDailyInterestForInvestment(investment.id, friday);
 
     expect(result.skipped).toBe(true);
+    if (!result.skipped) throw new Error("unreachable");
     expect(result.reason).toBe("friday");
 
     const entries = await prisma.ledgerEntry.findMany({
@@ -133,6 +135,7 @@ describe("accrueDailyInterestForInvestment", () => {
     );
 
     expect(result.skipped).toBe(true);
+    if (!result.skipped) throw new Error("unreachable");
     expect(result.reason).toBe("owner_suspended");
 
     const entries = await prisma.ledgerEntry.findMany({

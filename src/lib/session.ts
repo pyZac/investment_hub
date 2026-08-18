@@ -13,7 +13,11 @@ export function idleTimeoutForRole(role: "USER" | "ADMIN"): number {
 
 export const sessionCookieOptions = {
   httpOnly: true,
-  secure: true,
+  // Secure cookies are refused/dropped by browsers over plain HTTP, which is
+  // how this app is served in local dev (http://localhost:3000) — hardcoding
+  // true here silently broke session persistence in dev. Production is
+  // always served over HTTPS, so this stays Secure there.
+  secure: process.env.NODE_ENV === "production",
   sameSite: "strict" as const,
   path: "/",
 };

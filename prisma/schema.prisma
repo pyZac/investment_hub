@@ -94,6 +94,13 @@ model User {
 
   investments Investment[]
 
+  walletTransfers WalletTransfer[]
+
+  withdrawalRequests        WithdrawalRequest[]
+  withdrawalRequestsDecided WithdrawalRequest[] @relation("WithdrawalRequestDecidedBy")
+
+  savingLots SavingLot[]
+
   @@map("users")
 }
 
@@ -329,6 +336,76 @@ model JobRun {
   // ever retried in place (RUNNING -> COMPLETED/FAILED), never duplicated.
   @@unique([jobType, periodKey])
   @@map("job_runs")
+}
+
+enum TransferFromWallet {
+  A
+  C
+}
+
+model WalletTransfer {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id])
+
+  fromWallet TransferFromWallet @map("from_wallet")
+  amount     Decimal            @db.Decimal(24, 8)
+
+  requestedAt DateTime @map("requested_at")
+  processedAt DateTime @map("processed_at")
+
+  idempotencyKey String @unique @map("idempotency_key")
+
+  @@index([userId])
+  @@map("wallet_transfers")
+}
+
+enum WithdrawalRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model WithdrawalRequest {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id])
+
+  amount Decimal                 @db.Decimal(24, 8)
+  status WithdrawalRequestStatus @default(PENDING)
+
+  requestedAt DateTime @map("requested_at")
+
+  decidedAt        DateTime? @map("decided_at")
+  decidedByAdminId String?   @map("decided_by_admin_id")
+  decidedByAdmin   User?     @relation("WithdrawalRequestDecidedBy", fields: [decidedByAdminId], references: [id])
+  adminComment     String?   @map("admin_comment")
+
+  @@index([userId])
+  @@index([status])
+  @@map("withdrawal_requests")
+}
+
+model SavingLot {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id])
+
+  amount Decimal @db.Decimal(24, 8)
+
+  // Nullable: nothing populates this until Phase 6's Direct Commission
+  // creates saving_lots rows from the locked 3% split. No relation is
+  // declared back on Investment (one-directional reference only) since
+  // Phase 6 hasn't defined how that side should look yet.
+  sourceInvestmentId String? @map("source_investment_id")
+
+  createdAt  DateTime  @default(now()) @map("created_at")
+  unlocksAt  DateTime  @map("unlocks_at")
+  releasedAt DateTime? @map("released_at")
+
+  @@index([userId])
+  @@index([releasedAt, unlocksAt])
+  @@map("saving_lots")
 }
 
 model AdminAction {

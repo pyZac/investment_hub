@@ -4,10 +4,10 @@ import { prisma } from "./prisma";
 import { registerAsRoot } from "./users";
 import { adminCreditWalletB } from "./admin-credit";
 import { purchasePackage, listInvestmentsForUser, daysUntil } from "./investments";
+import { cleanupLedgerEntriesForUsers } from "./test-helpers";
 
 const createdUserIds: string[] = [];
 const createdPackageIds: string[] = [];
-const createdEntryIds: string[] = [];
 const createdInvestmentIds: string[] = [];
 
 const sampleQuestions = [
@@ -53,23 +53,11 @@ async function fundWalletB(userId: string, amount: string) {
     reason: "Test funding.",
     idempotencyKey,
   });
-  const entries = await prisma.ledgerEntry.findMany({ where: { idempotencyKey } });
-  for (const e of entries) createdEntryIds.push(e.id);
-}
-
-async function disableDeleteTrigger() {
-  await prisma.$executeRawUnsafe(`ALTER TABLE "ledger_entries" DISABLE TRIGGER ledger_entries_no_delete`);
-}
-
-async function enableDeleteTrigger() {
-  await prisma.$executeRawUnsafe(`ALTER TABLE "ledger_entries" ENABLE TRIGGER ledger_entries_no_delete`);
 }
 
 afterAll(async () => {
   await prisma.investment.deleteMany({ where: { id: { in: createdInvestmentIds } } });
-  await disableDeleteTrigger();
-  await prisma.ledgerEntry.deleteMany({ where: { id: { in: createdEntryIds } } });
-  await enableDeleteTrigger();
+  await cleanupLedgerEntriesForUsers(createdUserIds);
   await prisma.package.deleteMany({ where: { id: { in: createdPackageIds } } });
   await prisma.securityQuestion.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.walletAccount.deleteMany({ where: { userId: { in: createdUserIds } } });
@@ -93,7 +81,6 @@ describe("purchasePackage", () => {
     createdInvestmentIds.push(result.investment.id);
 
     const entries = await prisma.ledgerEntry.findMany({ where: { idempotencyKey } });
-    for (const e of entries) createdEntryIds.push(e.id);
     expect(entries).toHaveLength(2);
 
     const debit = entries.find((e) => e.direction === "DEBIT")!;
@@ -185,7 +172,6 @@ describe("purchasePackage", () => {
     expect(second.investment.id).toBe(first.investment.id);
 
     const entries = await prisma.ledgerEntry.findMany({ where: { idempotencyKey } });
-    for (const e of entries) createdEntryIds.push(e.id);
     expect(entries).toHaveLength(2);
 
     const investments = await prisma.investment.findMany({ where: { userId: user.id } });
@@ -214,9 +200,6 @@ describe("listInvestmentsForUser", () => {
       idempotencyKey: key1,
     });
     createdInvestmentIds.push(first.investment.id);
-    (await prisma.ledgerEntry.findMany({ where: { idempotencyKey: key1 } })).forEach((e) =>
-      createdEntryIds.push(e.id),
-    );
 
     const key2 = `list-test-2:${userA.id}:${crypto.randomUUID()}`;
     const second = await purchasePackage(userA.id, {
@@ -225,9 +208,6 @@ describe("listInvestmentsForUser", () => {
       idempotencyKey: key2,
     });
     createdInvestmentIds.push(second.investment.id);
-    (await prisma.ledgerEntry.findMany({ where: { idempotencyKey: key2 } })).forEach((e) =>
-      createdEntryIds.push(e.id),
-    );
 
     const key3 = `list-test-3:${userB.id}:${crypto.randomUUID()}`;
     const otherUsersInvestment = await purchasePackage(userB.id, {
@@ -236,9 +216,6 @@ describe("listInvestmentsForUser", () => {
       idempotencyKey: key3,
     });
     createdInvestmentIds.push(otherUsersInvestment.investment.id);
-    (await prisma.ledgerEntry.findMany({ where: { idempotencyKey: key3 } })).forEach((e) =>
-      createdEntryIds.push(e.id),
-    );
 
     const results = await listInvestmentsForUser(userA.id);
 

@@ -3,9 +3,9 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { adminCreditWalletB } from "./admin-credit";
 import { registerAsRoot } from "./users";
+import { cleanupLedgerEntriesForUsers } from "./test-helpers";
 
 const createdUserIds: string[] = [];
-const createdEntryIds: string[] = [];
 
 const sampleQuestions = [
   { question: "First pet's name?", answer: "Fluffy" },
@@ -41,19 +41,8 @@ async function getMainAdmin() {
   return prisma.user.findFirstOrThrow({ where: { isMainAdmin: true } });
 }
 
-async function disableDeleteTrigger() {
-  await prisma.$executeRawUnsafe(`ALTER TABLE "ledger_entries" DISABLE TRIGGER ledger_entries_no_delete`);
-}
-
-async function enableDeleteTrigger() {
-  await prisma.$executeRawUnsafe(`ALTER TABLE "ledger_entries" ENABLE TRIGGER ledger_entries_no_delete`);
-}
-
 afterAll(async () => {
-  await disableDeleteTrigger();
-  await prisma.ledgerEntry.deleteMany({ where: { id: { in: createdEntryIds } } });
-  await prisma.ledgerEntry.deleteMany({ where: { userId: { in: createdUserIds } } });
-  await enableDeleteTrigger();
+  await cleanupLedgerEntriesForUsers(createdUserIds);
   await prisma.adminAction.deleteMany({
     where: { OR: [{ targetUserId: { in: createdUserIds } }, { adminId: { in: createdUserIds } }] },
   });
@@ -83,7 +72,6 @@ describe("adminCreditWalletB", () => {
     expect(new Prisma.Decimal(walletB.balance).eq("1000")).toBe(true);
 
     const entries = await prisma.ledgerEntry.findMany({ where: { idempotencyKey } });
-    for (const e of entries) createdEntryIds.push(e.id);
     expect(entries).toHaveLength(2);
 
     const credit = entries.find((e) => e.direction === "CREDIT")!;
@@ -165,7 +153,6 @@ describe("adminCreditWalletB", () => {
     });
 
     const entries = await prisma.ledgerEntry.findMany({ where: { idempotencyKey } });
-    for (const e of entries) createdEntryIds.push(e.id);
     expect(entries).toHaveLength(2);
   });
 
@@ -188,7 +175,6 @@ describe("adminCreditWalletB", () => {
     });
 
     const entries = await prisma.ledgerEntry.findMany({ where: { idempotencyKey } });
-    for (const e of entries) createdEntryIds.push(e.id);
     expect(entries).toHaveLength(2);
 
     const walletB = await prisma.walletAccount.findUniqueOrThrow({

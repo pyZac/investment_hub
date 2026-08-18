@@ -4,9 +4,9 @@ import { prisma } from "./prisma";
 import { runReconciliation } from "./reconciliation";
 import { adminCreditWalletB } from "./admin-credit";
 import { registerAsRoot } from "./users";
+import { cleanupLedgerEntriesForUsers } from "./test-helpers";
 
 const createdUserIds: string[] = [];
-const createdEntryIds: string[] = [];
 
 const sampleQuestions = [
   { question: "First pet's name?", answer: "Fluffy" },
@@ -29,19 +29,8 @@ async function getMainAdmin() {
   return prisma.user.findFirstOrThrow({ where: { isMainAdmin: true } });
 }
 
-async function disableDeleteTrigger() {
-  await prisma.$executeRawUnsafe(`ALTER TABLE "ledger_entries" DISABLE TRIGGER ledger_entries_no_delete`);
-}
-
-async function enableDeleteTrigger() {
-  await prisma.$executeRawUnsafe(`ALTER TABLE "ledger_entries" ENABLE TRIGGER ledger_entries_no_delete`);
-}
-
 afterAll(async () => {
-  await disableDeleteTrigger();
-  await prisma.ledgerEntry.deleteMany({ where: { id: { in: createdEntryIds } } });
-  await prisma.ledgerEntry.deleteMany({ where: { userId: { in: createdUserIds } } });
-  await enableDeleteTrigger();
+  await cleanupLedgerEntriesForUsers(createdUserIds);
   await prisma.adminAction.deleteMany({ where: { targetUserId: { in: createdUserIds } } });
   await prisma.securityQuestion.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.walletAccount.deleteMany({ where: { userId: { in: createdUserIds } } });
@@ -61,8 +50,6 @@ describe("runReconciliation", () => {
       reason: "Reconciliation test credit.",
       idempotencyKey,
     });
-    const entries = await prisma.ledgerEntry.findMany({ where: { idempotencyKey } });
-    for (const e of entries) createdEntryIds.push(e.id);
 
     const report = await runReconciliation();
 
@@ -82,8 +69,6 @@ describe("runReconciliation", () => {
       reason: "Reconciliation drift test credit.",
       idempotencyKey,
     });
-    const entries = await prisma.ledgerEntry.findMany({ where: { idempotencyKey } });
-    for (const e of entries) createdEntryIds.push(e.id);
 
     // Simulate drift by writing directly to the cached balance, bypassing
     // postTransaction — exactly the kind of corruption reconciliation exists to catch.
@@ -114,8 +99,6 @@ describe("runReconciliation", () => {
       reason: "Reconciliation drift detail test.",
       idempotencyKey,
     });
-    const entries = await prisma.ledgerEntry.findMany({ where: { idempotencyKey } });
-    for (const e of entries) createdEntryIds.push(e.id);
 
     await prisma.walletAccount.update({
       where: { userId_type: { userId: user.id, type: "B" } },

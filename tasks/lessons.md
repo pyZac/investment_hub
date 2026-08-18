@@ -310,11 +310,29 @@ own duration if it shares a DB with real state, not just clean up its own
 created rows afterward. Here: suspend (`suspendedAt`) every other user with
 an ACTIVE investment before running, restore exactly those users afterward
 (never a blanket "unsuspend everyone", which could wrongly reinstate an
-already-suspended real user). Always re-verify `SUM(ledger) ==
-wallets.balance` for affected real users after any manual repair, not just
-delete the bad rows and assume the cached balance self-corrects (it doesn't
-— `wallets.balance` is only ever updated by `postTransaction`, so a direct
-`DELETE` on `ledger_entries` always needs a matching manual balance fix).
+already-suspended real user).
+
+**Standalone principle — how to repair any corrupted `wallets.balance`,
+regardless of cause**: `wallets.balance` is a cache; `ledger_entries` is the
+only source of truth (invariant #2 — no ledger UPDATE/DELETE, ever; the cache
+exists purely for read performance, per Decision 1). If a cached balance is
+ever found wrong — from a bug like this one, a bad migration, manual DB
+surgery, anything — the fix is always: **recompute it from scratch by
+summing the real ledger_entries for that user+wallet
+(`SUM(CREDIT) - SUM(DEBIT)`), then overwrite the cache with that queried sum.**
+Never decrement/increment the existing cached number by an estimated
+correction amount, and never type in a value you calculated by hand instead
+of querying it — both leave the cache one step removed from the ledger
+instead of exactly derived from it, and either can silently compound a prior
+arithmetic slip. `runReconciliation()` (`src/lib/reconciliation.ts`) is the
+tool for both ends of this: run it first to detect and locate exactly which
+user/wallet has drifted (its report gives the wallet, the drift amount, and
+direction), then run it again after the repair as the proof the fix is
+correct — a clean report with zero mismatches, not a manual balance
+comparison, is what closing out a cache-corruption repair looks like. This
+is the same operation the nightly reconciliation job and Phase 2's exit test
+already formalize; a manual repair is just this principle applied by hand to
+one row instead of the whole table.
 
 Mistake #2: the exit test's own verification query
 (`prisma.ledgerEntry.aggregate({ where: { referenceType, referenceId,
@@ -416,3 +434,189 @@ on a real side-by-side `/en` vs `/ar` visual comparison. Expect many more
 icon+text pairs in Phase 10/11's dashboards; check for physical
 `left-*`/`right-*`/`ml-*`/`mr-*`/`pl-*`/`pr-*`/`text-left`/`text-right` on any
 new component before it ships, not after a bug report.
+
+## 2026-08-17 — Phase 5 (SCRUM-55/56)
+Mistake: `daily-interest.test.ts` had 3 real `tsc --noEmit` errors (accessing
+`result.reason` after `expect(result.skipped).toBe(true)`, which is a
+runtime check TypeScript's control-flow narrowing can't see — `AccrualResult`
+is a discriminated union and `.reason` only exists on the `skipped: true`
+branch). These were reported as "pre-existing, unrelated to this task" across
+two consecutive task summaries (SCRUM-55, then SCRUM-56) without ever being
+fixed or logged as a tracked item — they slipped through unnoticed because
+`vitest` runs tests via esbuild/transform, not `tsc`, so the runtime suite
+stayed green while `tsc --noEmit` failed independently; nothing surfaces that
+divergence unless both are actually run and their outputs compared.
+Rule: "pre-existing and unrelated to my change" is not the same as "safe to
+leave alone" — if a `tsc --noEmit` (or any full-project check) error is
+noticed while verifying a task, either fix it in the same session or add an
+explicit tracked entry (this file or todo.md) before moving to the next
+task, never just mention it in a chat summary and let it ride. Chat summaries
+are not tracking. Fixed here by narrowing with `if (!result.skipped) throw
+...` immediately after the runtime assertion, so both the test's own logic
+and the type checker agree on which branch it's in.
+
+## 2026-08-18 — Phase 5 (SCRUM-61)
+Mistake: after SCRUM-61 shipped the withdrawals page, the user hit an
+intermittent runtime crash in the browser — "Invalid environment
+configuration: DATABASE_URL expected string, invalid_type" — on
+`/en/withdrawals` specifically. First response was to restart the app
+container and declare it fixed after one clean check; the user correctly
+pushed back that this was a real recurring issue and asked for actual root
+-cause investigation (checking the live process's real env, comparing
+against working routes, correlating logs), not another restart-and-hope.
+Root cause, confirmed by inspecting the compiled dev bundle directly
+(`grep -c DATABASE_URL` in `.next/server/app/[locale]/*/page.js`):
+`config.ts` validated `process.env` **eagerly at module-import time** and
+threw synchronously on failure. `/withdrawals` was the first route where
+`config.ts` became reachable from **both** the Server Component graph
+(`page.tsx` → `interest-rate.ts`/`display.ts`) **and** the `"use server"`
+Server Action graph (`actions.ts` → `withdrawal-requests.ts`) simultaneously
+— confirmed 3 separate inlined copies of the env schema in that route's
+compiled bundle vs. 0 for `/investments` and `/packages` (which never reach
+`config.ts` from a `"use server"` file). Next.js's dev-mode webpack bundler
+doesn't always dedupe a shared module across those two boundaries, so each
+of the 3 instances ran its own independent top-level `envSchema.safeParse
+(process.env)` on that route's compilation/re-instantiation — and one of
+them intermittently hit a transient/incomplete `process.env` snapshot during
+dev-mode's per-request module re-evaluation, throwing and crashing the whole
+request instead of a caught, retryable error. Verified NOT the cause (ruled
+out before finding the real one): `DATABASE_URL` was correctly set in
+`docker-compose.yml`'s `environment:` block the entire time (confirmed via
+`docker inspect`, `printenv`, and reading `/proc/<pid>/environ` for the
+actual live `next-server` process, not just a fresh spawned check) — a
+sibling `.env` file did have a *different* `DATABASE_URL` (`localhost`
+instead of `postgres`), which looked suspicious but was a red herring: that
+file is host-only (read by Prisma CLI/vitest/tsc run directly on Windows,
+which cannot resolve the `postgres` Docker service hostname), never reaches
+the container's `next dev` process at all, and briefly "fixing" it to match
+compose broke host-side tooling immediately (confirmed: `prisma migrate
+status` hung). Reverted that edit and instead left a comment in `.env`
+explaining why the two values must stay different — see the comment above
+`DATABASE_URL` there.
+Rule: (1) **A module that validates external input (env, config) should
+never throw synchronously at import/module-eval time in an app with
+multiple possible bundle instantiations of that module** (dev-mode
+multi-graph bundling, serverless cold starts, etc.) — validate lazily on
+first real access and memoize the result, so a transient snapshot gap during
+module load becomes a normal single re-check on next access, not a hard
+crash. `config.ts` is now a lazy/memoized `Proxy` instead of an eager
+top-level `throw`; this is the standing pattern for this project's env
+config going forward. (2) Any future route that pulls the same lib file into
+both a Server Component (`page.tsx`) and a `"use server"` Server Action file
+simultaneously should be treated as a candidate for this exact class of dev
+-mode bundle-duplication issue — check `.next/server/app/.../page.js` for
+duplicate inlined copies of a shared module if a similarly intermittent,
+route-specific crash appears again; don't assume it's a one-off. (3) When a
+user reports an intermittent/recurring runtime error and a first restart
+"fixes" it, that is not confirmation of the fix — it's confirmation the bug
+is a race, which a restart temporarily avoids by luck of timing, not
+resolves. Actually investigating (live process env inspection, compiled
+-bundle diffing against a working route, repeated real requests including
+concurrent bursts post-fix) is what distinguishes a real fix from a
+coincidence, and multiple genuinely independent verification passes (20+
+sequential requests, 15+ concurrent across bursts, both locales, one true
+cold compile) is the right bar before calling an intermittent bug closed —
+a single clean check after a restart proves nothing about whether the race
+window was actually removed.
+
+## 2026-08-18 — Phase 5 (session cookie, discovered while investigating SCRUM-61)
+Mistake: `session.ts`'s `sessionCookieOptions` hardcoded `secure: true`
+unconditionally, since Phase 1. This app is served over plain HTTP in local
+dev (`http://localhost:3000`) — browsers refuse to persist a `Secure`
+-flagged cookie set over a non-HTTPS connection (or drop it inconsistently
+depending on browser/version), so the session cookie likely never persisted
+reliably in dev at all. Confirmed directly: `curl -i` against `/api/auth/
+login` showed `Set-Cookie: ... Secure; HttpOnly; SameSite=strict` on a plain
+`http://` response. Discovered only while investigating an unrelated issue
+(SCRUM-61's config.ts crash) when the user reported their manually-pasted
+session cookie kept "expiring" — this had been silently causing friction
+across every manual browser verification pass since Phase 3 (packages page,
+investments page, and now withdrawals), not a new symptom, just never
+previously traced to its actual cause. Every prior "session expired, please
+log in again" moment in this project's manual-testing history was likely
+this bug, not a real idle timeout (4h for users / 30m for admins per
+`idleTimeoutForRole`).
+Rule: cookie security flags must be environment-conditional, never
+hardcoded for a dual dev(HTTP)/production(HTTPS) app. Fixed as `secure:
+process.env.NODE_ENV === "production"` in `session.ts` — dev stays usable
+over plain HTTP, production keeps the `Secure` flag as required. `HttpOnly`
+and `SameSite=strict` are correct to keep hardcoded (they don't depend on
+the transport being HTTPS). Verified via a fresh `curl -i` login showing
+`Secure` no longer present in the dev `Set-Cookie` header, plus `session
+.test.ts`'s existing 10 tests still passing and `tsc --noEmit` clean. Since
+there's no `/login` UI yet (Phase 10 work), manual browser verification in
+Phases 3-5 has relied entirely on cookie-pasting via DevTools after an API
+login — any future manual-verification session hitting unexplained
+"session expired" friction should check the actual `Set-Cookie` header
+first (`curl -i` against the login endpoint) rather than assuming a normal
+timeout, especially before Phase 10 ships a real login form and this class
+of manual-auth friction becomes less common.
+
+## 2026-08-18 — Phase 5 (SCRUM-62)
+Mistake: the Phase 5 exit-test scratch script's `afterAll`-equivalent
+cleanup deleted ledger rows via `where: { userId: { in: createdUserIds } } }`
+— the exact same root cause already flagged **twice** in this file (Phase 2:
+`reconciliation.test.ts`'s cleanup; Phase 2 again: a one-off verification
+script). That filter only ever matches the real-user-side row of a
+`postTransaction` pair; the paired `SYSTEM_EXTERNAL` row (`userId: null`)
+from the same call is never scoped by any `userId` filter and was left
+behind every time. Caught only because I insisted on re-running the full
+suite one more time after the exit test "passed," rather than treating
+29/29 exit-test assertions as sufficient — `reconciliation.test.ts` (a true
+whole-database solvency check) failed with `SYSTEM_EXTERNAL: total user
+balances=11400, ledger net=-20100, drift=-8700`. Diagnosed by finding every
+`SYSTEM_EXTERNAL` ledger row with no surviving non-SYSTEM_EXTERNAL sibling
+sharing its `idempotencyKey` — all 16 orphans traced directly to this
+session's own exit-test funding/approval calls (`phase5-exit-fund:*`,
+`withdrawal_request_approval:*`), confirming it was self-inflicted, not
+latent pre-existing drift.
+Rule: this is now the **third** time this exact mistake has happened in
+this project (see the two Phase 2 entries above) — it is clearly not
+sticking as a "remember it next time" fact, so treat it as a hard checklist
+item, not a recalled lesson: **any script/test that calls
+`postTransaction`/`adminCreditWalletB`/anything that writes a paired
+SYSTEM_EXTERNAL ledger row MUST clean up by `idempotencyKey`, never by
+`userId` alone — no exceptions, check this explicitly before writing any
+new cleanup block, don't rely on remembering it.** Also: **"the exit test's
+own assertions passed" is not the same bar as "the database is left
+clean"** — after any exit test or manual scratch script that writes real
+rows, run the full suite (specifically `reconciliation.test.ts`, the
+whole-database check) as a separate, mandatory final step before declaring
+the phase done, even when every scenario-specific assertion in the exit
+test itself already passed. Repaired here via the standard
+recompute-from-source principle: found every orphaned SYSTEM_EXTERNAL row
+by idempotencyKey-sibling lookup (not by guessing which ones were mine) and
+deleted exactly those, then re-verified via the real `runReconciliation()`
+function (not just a hand-rolled balance check) before re-running the full
+suite as final proof.
+
+**Addendum, same day**: after the third occurrence above, the user asked
+whether this could be made structurally harder to get wrong instead of
+relying on remembering the rule — correctly pointing out that "remember
+this" had already failed three times. Built `cleanupLedgerEntriesForUsers
+(userIds: string[])` in a new `src/lib/test-helpers.ts`: takes the user-id
+array every test already reliably tracks (that part was never the failure
+point — only the ledger-row scoping was), looks up every ledger entry
+belonging to those users, collects the distinct idempotencyKeys, deletes
+every row sharing those keys (any userId, including null) in one call —
+structurally includes SYSTEM_EXTERNAL siblings, no manual array-pushing
+possible to forget. Considered and rejected a version taking an explicit
+idempotencyKey array instead: several production functions
+(`transferAtoB`, etc.) generate their key internally via `randomUUID()`, so
+a test can't always know it in advance to collect it — same discipline gap
+as the bug itself, just moved. Migrated the 8 test files that had the
+risky `userId`-only pattern (`admin-credit`, `transfers`,
+`withdrawal-requests`, `capital-release`, `saving-lots`, `reconciliation`,
+`ledger-transaction`, `investments`) to the helper, removing their manual
+`createdEntryIds` tracking entirely. Deliberately left
+`daily-interest(-job).test.ts` alone — they scope cleanup by
+`referenceType`/`referenceId` (investment id) instead, a different but
+already-correct strategy for that pairing, not an instance of this bug
+class.
+Rule: **any new test or scratch script that creates users and writes
+ledger entries for them must call `cleanupLedgerEntriesForUsers
+(createdUserIds)` in its cleanup — never hand-write `ledgerEntry.deleteMany
+({ where: { userId: ... } })` again.** This is now the standing, structural
+answer to the recurring mistake, not just a documented pattern to remember
+— use it from Phase 6 onward for every new test file and every future
+scratch exit-test script.
