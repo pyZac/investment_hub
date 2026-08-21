@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { z } from "zod";
 
 /**
@@ -37,6 +38,15 @@ let cached: Readonly<Config> | undefined;
  * whole request instead of being a recoverable retry. Lazy + memoized means
  * each duplicated instance validates at most once, on first real use, when
  * process.env is guaranteed fully populated — not racing module load order.
+ */
+/**
+ * `import "dotenv/config"` above loads .env explicitly, rather than relying
+ * on @prisma/client's runtime bundling dotenv and loading it as a side
+ * effect of `new PrismaClient()`. This module previously depended on
+ * whatever else happened to import `./prisma` first in the same module
+ * graph — every test file did, until binary-cycle.ts (a pure function
+ * needing only config.TIMEZONE, no DB access) didn't, surfacing that this
+ * module must be self-sufficient for its own env loading.
  */
 function loadConfig(): Readonly<Config> {
   if (cached) {

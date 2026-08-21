@@ -81,11 +81,13 @@ async function suspend(userId: string) {
 
 afterAll(async () => {
   await prisma.savingLot.deleteMany({ where: { userId: { in: createdUserIds } } });
+  await prisma.bvEntry.deleteMany({ where: { sourceInvestmentId: { in: createdInvestmentIds } } });
   await prisma.investment.deleteMany({ where: { id: { in: createdInvestmentIds } } });
   await cleanupLedgerEntriesForUsers(createdUserIds);
   await prisma.package.deleteMany({ where: { id: { in: createdPackageIds } } });
   await prisma.securityQuestion.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.walletAccount.deleteMany({ where: { userId: { in: createdUserIds } } });
+  await prisma.binaryNode.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
   await prisma.$disconnect();
 });

@@ -133,5 +133,16 @@
     "destinationWalletC": "Wallet C",
     "destinationSaving": "SAVING",
     "commissionHistoryEmptyState": "You have not earned any Direct Commission yet."
+  },
+  "BinaryTree": {
+    "pageTitle": "Binary Tree",
+    "pageDescription": "Your placement in the binary tree and the downline below you.",
+
+    "treeHeading": "Your tree",
+    "treeDescription": "Shown down to 5 levels below you. LEFT and RIGHT reflect actual placement, not your display language.",
+
+    "emptyStateTitle": "You have not been placed yet",
+    "emptyStateDescription": "Your position in the binary tree is assigned automatically once someone sponsors you.",
+    "noDownlineYetNote": "You have no downline yet. New referrals placed under you will appear here."
   }
 }

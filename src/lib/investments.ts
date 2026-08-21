@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { postTransaction } from "./ledger-transaction";
 import { payDirectCommissionInTx } from "./direct-commission";
+import { rollupBvForPurchase } from "./binary-tree";
 
 const purchasePackageInputSchema = z.object({
   packageId: z.string(),
@@ -119,6 +120,7 @@ export async function purchasePackage(userId: string, input: PurchasePackageInpu
     });
 
     await payDirectCommissionInTx(investment.id, data.forDate, tx);
+    await rollupBvForPurchase(investment.id, userId, pkg.amount, data.forDate, tx);
 
     return { alreadyProcessed: false as const, investment };
   });

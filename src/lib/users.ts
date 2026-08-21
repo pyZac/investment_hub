@@ -3,6 +3,7 @@ import { prisma } from "./prisma";
 import { hashPassword } from "./password";
 import { securityQuestionInputSchema, type SecurityQuestionInput } from "./security-questions";
 import { createWalletsForUser } from "./wallets";
+import { placeInBinaryTree } from "./binary-tree";
 
 const registrationInputSchema = z.object({
   email: z.email(),
@@ -57,6 +58,7 @@ export async function registerWithSponsor(sponsorId: string, input: Registration
     });
 
     await createWalletsForUser(tx, user.id);
+    await placeInBinaryTree(sponsor.id, user.id, tx);
 
     return user;
   });
@@ -162,6 +164,10 @@ export async function adminCreateUser(actingAdminId: string, input: AdminCreateU
     });
 
     await createWalletsForUser(tx, user.id);
+
+    if (data.sponsorId) {
+      await placeInBinaryTree(data.sponsorId, user.id, tx);
+    }
 
     return user;
   });

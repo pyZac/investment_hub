@@ -620,3 +620,85 @@ ledger entries for them must call `cleanupLedgerEntriesForUsers
 answer to the recurring mistake, not just a documented pattern to remember
 — use it from Phase 6 onward for every new test file and every future
 scratch exit-test script.
+
+## 2026-08-21 — Phase 7 (SCRUM-70)
+Mistake: first draft of the BFS placement algorithm picked the sponsor's
+weak leg ONCE (BV tie -> LEFT) and then BFS'd only within that chosen leg's
+subtree for an open slot. On a fresh tree (BV starts at 0 for everyone,
+always a tie), this meant the second referral spilled deeper into LEFT
+(since LEFT's direct slot was already taken by the first referral) instead
+of landing in the sponsor's still-empty RIGHT slot — failing the "first two
+referrals become direct LEFT/RIGHT children" requirement outright, caught
+immediately by the first test run, not by design review.
+Rule: an open direct child slot at a node always wins over spilling deeper
+into either leg, regardless of BV comparison — check "does this node have
+an empty LEFT/RIGHT slot?" FIRST, and only fall back to
+weak-leg-BV-then-BFS-within-that-leg once both direct slots are already
+occupied. Confirmed explicitly with the user as a two-phase algorithm
+(fast path: fill an open direct slot; slow path: real BV-based spillover)
+rather than assuming a single "always compare BV" rule would naturally
+produce the right first-two-children behavior — it doesn't, because a 0/0
+tie under any single-leg-then-BFS design will always drift deeper down
+one side instead of ever using the other direct slot.
+
+## 2026-08-21 — Phase 7 (SCRUM-70)
+Mistake: adding `binary_nodes` (with a `parent_id` self-FK and a `user_id`
+FK to `users`, both `ON DELETE RESTRICT` per invariant #7) broke two
+pre-existing test files' `afterAll` cleanup order
+(`securityQuestion -> walletAccount -> user`) the moment those files'
+sponsor-chain tests started creating binary_nodes rows as a side effect of
+calling `registerWithSponsor` — `user.deleteMany` now fails on
+`binary_nodes_user_id_fkey` since nothing deleted the node first. This
+wasn't visible from the new test file alone; only running the FULL suite
+surfaced it (matches the standing "run the whole suite, not just your new
+file" rule already in this log, but for a schema-level FK this time, not a
+ledger-idempotency-key issue).
+Rule: adding any new table with an `ON DELETE RESTRICT` FK to `users` (or
+any other table existing tests already clean up) requires auditing every
+existing test file whose `afterAll` deletes rows from that referenced
+table, not just writing correct cleanup for the new test file — a schema
+change with RESTRICT semantics can retroactively break cleanup order in
+code that hasn't been touched. Self-referencing FKs (like
+`binary_nodes.parent_id`) also can't be cleaned up with a single flat
+`deleteMany` scoped to a user-id list if any node in that set is still
+some other node's parent — delete leaf nodes first, repeatedly, until none
+remain (or delete children before parents if the hierarchy is known
+upfront).
+
+## 2026-08-22 — Phase 7 (SCRUM-71)
+Mistake: none in the shipped code, but a real latent environment gap
+surfaced while writing `binary-cycle.ts` — a pure function needing only
+`config.TIMEZONE`, no DB access. `config.ts`'s env validation
+(`envSchema.safeParse(process.env)`) had silently depended, since Phase 1,
+on some OTHER module in the same import graph having already imported
+`./prisma` first — `@prisma/client`'s runtime bundles `dotenv` and loads
+`.env` as a side effect of `new PrismaClient()`; `config.ts` itself never
+called anything to load `.env`. Every test file written so far happened to
+import `./prisma` transitively (directly, or via a lib module that talks
+to the DB), so this coupling never broke anything — until a file that
+genuinely only needed config, not Prisma, didn't.
+Rule: a config/env module must load its own `.env` explicitly
+(`import "dotenv/config"` at the top of `config.ts`, `dotenv` was already a
+project dependency) rather than relying on an unrelated module's import
+side effect to populate `process.env` first. When a new pure-logic module
+needs `config.*` but not `prisma`, and its standalone test file throws env
+-validation errors that don't reproduce when run alongside other test
+files, suspect this exact class of hidden import-order coupling before
+assuming the test or the new module is wrong — verify by running the new
+test file in complete isolation (`vitest run path/to/just-that-file.test.ts`),
+since a full-suite run can mask the gap by accident of file ordering.
+
+## 2026-08-22 — Phase 7 (SCRUM-71)
+Mistake: none this time — caught proactively by applying the SCRUM-70
+lesson rather than rediscovering it. Adding `bv_entries` (FK to
+`investments.id`, `ON DELETE RESTRICT`) would have broken
+`direct-commission.test.ts` and `users.test.ts` again, the same way
+`binary_nodes` did in SCRUM-70 — both files create investments via
+sponsored purchases (now generating bv_entries rows) and both call
+`investment.deleteMany` in their `afterAll`.
+Rule confirmed (not new, but worth re-noting since it worked): every time
+a new table adds a RESTRICT FK to a table other tests already clean up,
+explicitly grep for `<referencedModel>.deleteMany` across `*.test.ts`
+BEFORE running the full suite, not after hitting the failure — this time
+it was caught and fixed in the same pass as writing the new test file,
+rather than needing a second full-suite run to discover it.

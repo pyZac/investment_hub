@@ -133,5 +133,16 @@
     "destinationWalletC": "Wallet C",
     "destinationSaving": "SAVING",
     "commissionHistoryEmptyState": "لم تكسب أي Direct Commission بعد."
+  },
+  "BinaryTree": {
+    "pageTitle": "الشجرة الثنائية",
+    "pageDescription": "موقعك في الشجرة الثنائية والشبكة الموجودة أسفلك.",
+
+    "treeHeading": "شجرتك",
+    "treeDescription": "معروضة حتى 5 مستويات أسفلك. يعكس LEFT وRIGHT الموضع الفعلي، وليس لغة العرض.",
+
+    "emptyStateTitle": "لم يتم تعيين موقعك بعد",
+    "emptyStateDescription": "يتم تعيين موقعك في الشجرة الثنائية تلقائيًا بمجرد أن يقوم شخص ما برعايتك.",
+    "noDownlineYetNote": "ليس لديك شبكة فرعية بعد. ستظهر هنا الإحالات الجديدة التي يتم وضعها تحتك."
   }
 }

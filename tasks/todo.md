@@ -1,3 +1,541 @@
+# Phase 7 — Placement Tree & BV Rollup
+
+## SCRUM-69: binary_nodes table — DONE
+
+- [x] Added `BinaryNode` model (`binary_nodes`, migration
+      `20260821130000_add_binary_nodes`, applied via `migrate deploy` per the
+      standing hand-edited-migration rule) — `userId` is the primary key
+      itself (1:1 with users, not a separate `id` + unique constraint),
+      `parentId` self-references `binary_nodes.user_id` (nullable for root),
+      `position` enum LEFT/RIGHT (nullable — only the root has none), `path`
+      materialized (cuid segments, e.g. `/cuid1/cuid2/cuid3/` — the doc's
+      `/1/4/9/` example is illustrative, this project uses cuids not
+      sequential ints), `depth` int. Both FKs `ON DELETE RESTRICT` (matches
+      invariant #7, no hard delete on users). Indexed on `parentId` and
+      `path`.
+- [x] Confirmed via `\d binary_nodes` and `prisma migrate status` /
+      `tsc --noEmit` clean.
+
+## SCRUM-70: placement algorithm (BFS, weaker-BV leg) — DONE
+
+Confirmed with user before implementing:
+- Cached per-node BV total needs a schema addition now (leftBv/rightBv on
+  binary_nodes) rather than summing subtrees on every registration — the
+  phase brief explicitly suggests this. SCRUM-71 (BV rollup) will be what
+  actually increments these to nonzero values; this task adds the columns
+  and reads/writes them (always 0 delta at registration time, since a
+  brand-new node contributes no BV of its own).
+- Tie-break rule (equal or zero BV on both legs): always prefer LEFT,
+  deterministic and simplest, matches the phase brief's own suggested
+  default. The "first two referrals become direct LEFT then RIGHT children"
+  behavior falls out of this rule naturally (LEFT fills on referral 1,
+  becomes occupied, so referral 2's LEFT-preference finds LEFT taken at the
+  sponsor and takes RIGHT) — not a special-cased "first two children" rule.
+
+Plan:
+- [ ] Migration: add `leftBv`/`rightBv` `Decimal(24,8)` columns to
+      `binary_nodes`, default 0. Hand-written migration +
+      `migrate deploy` (standing rule).
+- [ ] `src/lib/binary-tree.ts` (new file): `placeInBinaryTree(sponsorId,
+      newUserId, tx)`:
+      1. Load the sponsor's `binary_nodes` row. If the sponsor has none yet
+         (e.g. a root user who was never placed as anyone's referral),
+         create it as a tree root: `parentId: null`, `position: null`,
+         `path: "/{sponsorId}/"`, `depth: 0`, `leftBv/rightBv: 0` — a
+         sponsor must have a placement node before their own referral can
+         be placed relative to it.
+      2. Pick target leg at the sponsor: `leftBv <= rightBv ? LEFT : RIGHT`
+         (covers both the tie and the empty case, per the LEFT-preference
+         rule).
+      3. BFS from the sponsor's direct child on that leg (if empty, the
+         slot is the sponsor's own direct child — done immediately). BFS
+         queue explores nodes leg-subtree-wide; at each dequeued node,
+         check LEFT then RIGHT for an open child slot (checked via
+         `parentId` absence at that position, not a separate "has children"
+         field) — first open slot found (LEFT-checked-before-RIGHT at each
+         node, standard BFS/queue order) wins.
+      4. Create the new `binary_nodes` row: `parentId` = the found node's
+         userId, `position` = the found open slot's side, `path` = parent's
+         path + newUserId + '/', `depth` = parent's depth + 1, `leftBv`/
+         `rightBv` = 0.
+      5. Takes `tx: Prisma.TransactionClient` (required, not optional) —
+         called from the registration flow inside the same transaction as
+         user creation, matching `isDirectCommissionTriggerPurchase`'s
+         reasoning: two concurrent registrations under the same sponsor
+         must not both read the same "first open slot" and collide:
+         relies on the FK + this being invoked inside the caller's write
+         transaction for consistency, no separate advisory lock added
+         (matches this codebase's existing pattern of leaning on tx
+         atomicity rather than explicit locking elsewhere).
+- [ ] Wire into `src/lib/users.ts`: both `registerWithSponsor` and
+      `adminCreateUser` (when a sponsorId is given) call
+      `placeInBinaryTree(sponsorId, user.id, tx)` inside their existing
+      transaction, right after `tx.user.create(...)`. `registerAsRoot`
+      does NOT call it — a root user gets no placement node until/unless
+      they later sponsor someone (lazily created at that point, per step 1
+      above) or an admin explicitly wants every root pre-placed (out of
+      scope here per the ticket's own framing: this ticket is about the
+      placement algorithm itself, not about backfilling roots).
+- [ ] Tests first (`binary-tree.test.ts`):
+      - sponsor with an empty tree: first referral placed as sponsor's
+        direct LEFT child (position, parentId, path, depth all correct);
+        second referral placed as sponsor's direct RIGHT child (both legs
+        at 0 BV, LEFT already taken -> RIGHT chosen)
+      - third referral (spillover): with both direct slots full, BFS finds
+        the first open slot down the weaker leg (construct a case where
+        it's unambiguous which leg is weaker via manually-seeded
+        leftBv/rightBv, then confirm placement lands under the correct
+        existing node via BFS order, not as some other structure)
+      - tie resolution: explicit equal nonzero leftBv/rightBv at the
+        sponsor deterministically picks LEFT every time (call multiple
+        times / assert repeatably, not just once)
+      - placement targets the sponsor's tree specifically: two independent
+        sponsors' trees don't interfere — placing under sponsor A never
+        touches or reads sponsor B's nodes/BV
+      - a sponsor with no existing binary_nodes row (root never previously
+        placed) gets lazily created as a tree root before their referral
+        is placed under them
+- [x] Migration `20260821140000_add_binary_nodes_bv_cache`: added
+      `leftBv`/`rightBv` Decimal(24,8) columns to `binary_nodes`, default 0.
+      Applied via `migrate deploy` + `prisma generate`.
+- [x] `src/lib/binary-tree.ts`: `placeInBinaryTree(sponsorId, newUserId,
+      tx)`. Real algorithm bug found and fixed during testing (not caught
+      by design review): the first draft picked a weak leg once at the
+      sponsor (tie -> LEFT) and then BFS'd only within that leg's subtree —
+      so on a 0/0 tie, the second referral spilled deeper into LEFT
+      (since LEFT's direct slot was already taken) instead of landing in
+      the sponsor's still-empty RIGHT slot, breaking the "first two
+      referrals become direct LEFT/RIGHT children" requirement. Confirmed
+      fix with user: an open direct slot at the sponsor always wins over
+      spilling deeper, regardless of BV — the BV-weak-leg-then-BFS logic
+      only kicks in once BOTH of the sponsor's direct slots are already
+      taken. `getOrCreateRootNode` lazily creates a binary_nodes row for a
+      sponsor who has none yet (a root user who's never been placed
+      themselves, since only sponsored placements are wired in, not
+      registerAsRoot).
+- [x] Wired into `src/lib/users.ts`: `registerWithSponsor` always calls
+      `placeInBinaryTree`; `adminCreateUser` calls it only when a
+      `sponsorId` was given. `registerAsRoot` does not call it (no
+      placement to make relative to since there's no sponsor) — a root
+      user's own node is created lazily, on demand, the first time they
+      sponsor someone.
+- [x] `src/lib/binary-tree.test.ts`: 6 tests, all passing — first two
+      referrals land as direct LEFT then RIGHT children; a third referral
+      spills via BFS to the correct existing node's open slot (not a third
+      direct child); an explicit BV tie at the sponsor resolves to LEFT
+      deterministically across two consecutive calls; two independent
+      sponsors' trees never interfere (including BV totals staying
+      untouched); a sponsor with no pre-existing binary_nodes row gets one
+      lazily created as a tree root before their referral is placed;
+      placing under a nonexistent sponsor id throws (FK violation, not a
+      silently wrong placement).
+- [x] Found and fixed a real gap surfaced only by running the FULL suite
+      (not just the new file): `users.test.ts` and `direct-commission.test
+      .ts` both predate binary_nodes and clean up in the order
+      securityQuestion -> walletAccount -> user, which now fails on
+      `binary_nodes_user_id_fkey` (RESTRICT) since those files' sponsor
+      -chain tests now create binary_nodes rows as a side effect of calling
+      `registerWithSponsor`. Fixed by adding `binaryNode.deleteMany` before
+      `user.deleteMany` in both files' `afterAll`.
+- [x] The first full-suite run (before that fix) left 28 orphaned
+      binary_nodes-linked test users behind from its failed cleanup.
+      Investigated before deleting anything: queried exactly which users
+      binary_nodes referenced (all matched the `direct-commission-*`/
+      `sponsor-*`/`referred-*`/`list-*` naming from those two files' own
+      test runs, none were the main admin), then found 31 MORE unrelated
+      `test.local` leftover users (`pkg-admin-*`/`pkg-user-*`, dated back to
+      2026-08-15 — pre-existing leftover data from Phase 3, not from this
+      session) while scoping the cleanup query. Removed all 59 as one
+      cleanup pass (all clearly test-pattern emails, zero real users, zero
+      main admin) via a scratch script using `cleanupLedgerEntriesForUsers`
+      + a leaf-first repeated-delete loop for binary_nodes (self-FK
+      RESTRICT means children must go before parents) — not a plain
+      `deleteMany`, which would fail the same way the test cleanup did.
+      Verified `reconciliation.test.ts` clean after, then ran the full
+      suite fresh as final proof: 33 files, 228/228 passing. Scratch
+      scripts deleted; `git status` confirms no trace.
+- [x] Full suite: 33 files, 228/228 passing, including
+      `reconciliation.test.ts` clean. `tsc --noEmit` clean.
+
+## SCRUM-71: bv_entries table + BV rollup on purchase — DONE
+
+Confirmed with user: `bv_entries.cycle_week_start` needs a real Saturday
+-start weekly-cycle boundary (Asia/Dubai), not just the raw purchase
+timestamp — adding a small `saturdayWeekStart(forDate): Date` helper as
+part of this task (the actual weekly binary-commission cycle/payout logic
+itself is out of scope here, this is only for correctly stamping the
+column).
+
+Plan:
+- [ ] Migration: `bv_entries` table — id, ancestorUserId (FK ->
+      binary_nodes.user_id, since every ancestor already has a node by
+      construction), sourceInvestmentId (FK -> investments.id), leg
+      (LEFT|RIGHT), amount Decimal(24,8), cycleWeekStart, createdAt.
+      `UNIQUE(ancestor_user_id, source_investment_id)` — prevents an
+      ancestor from ever double-counting the same purchase (also acts as
+      the replay guard, no separate idempotency key needed since this
+      isn't a ledger write).
+- [ ] `src/lib/binary-cycle.ts` (new, small): `saturdayWeekStart(forDate:
+      Date): Date` — walks back to the most recent Saturday 00:00 in
+      Asia/Dubai, mirrors `isFriday`'s Intl.DateTimeFormat pattern from
+      interest-rate.ts. Small test file alongside.
+- [ ] `src/lib/binary-tree.ts`: add `rollupBvForPurchase(investmentId,
+      buyerId, amount, forDate, tx)`:
+      1. Load the buyer's binary_nodes row (path, e.g.
+         `/root/.../grandparent/parent/buyer/`).
+      2. Parse `path` into its ordered list of ancestor user ids
+         (everyone strictly above the buyer — the buyer's own trailing
+         segment excluded).
+      3. For each ancestor, walking from the buyer's direct parent up to
+         the root: the "leg" is which of the ancestor's two direct
+         children the chain passes through next — read directly off the
+         next path segment's own binary_nodes.position (LEFT/RIGHT), not
+         re-derived some other way.
+      4. For each (ancestor, leg): skip if a bv_entries row already
+         exists for (ancestorUserId, sourceInvestmentId) — replay guard.
+         Otherwise: create the bv_entries row, and atomically increment
+         that ancestor's binary_nodes.leftBv or rightBv by `amount`
+         (`{ increment: amount }`, not a read-then-write, to stay correct
+         under concurrent purchases in different transactions).
+      5. cycleWeekStart = `saturdayWeekStart(forDate)`.
+      Takes `tx: Prisma.TransactionClient` (required) — must run inside
+      the same transaction as the purchase/investment write, matching
+      payDirectCommissionInTx's reasoning.
+- [ ] Wire into `src/lib/investments.ts`: `purchasePackage` calls
+      `rollupBvForPurchase(investment.id, userId, pkg.amount, data.forDate,
+      tx)` right after `payDirectCommissionInTx`, only on the
+      newly-created path. Package purchases ONLY — never called from
+      daily-interest, direct-commission, saving-lots, capital-release, or
+      admin-credit code paths (per the BV definition: purchases only,
+      never profits/commissions/rank rewards/transfers).
+- [ ] Tests first (`binary-tree.test.ts`, extending the existing
+      describe blocks, or a new `bv-rollup.test.ts` — decide at build
+      time based on file size):
+      - a purchase at the bottom of a real multi-level tree (built via
+        real registerWithSponsor/spillover placements, not hand-crafted
+        binary_nodes rows) creates a bv_entries row for EVERY ancestor up
+        to the root, each with the correct leg (cross-check against each
+        ancestor's actual position relative to the buyer) and the correct
+        amount; cached leftBv/rightBv on every ancestor's binary_nodes
+        row matches the sum of bv_entries for that ancestor exactly.
+      - a DAILY_INTEREST credit and a DIRECT_COMMISSION credit each
+        create zero bv_entries rows and leave every ancestor's
+        leftBv/rightBv unchanged (call the real accrual/commission
+        functions, not a simulated ledger write).
+      - replaying rollupBvForPurchase for the same investmentId a second
+        time creates no duplicate bv_entries rows and does not
+        double-increment any ancestor's cached BV.
+      - end-to-end via purchasePackage itself (not just the internal
+        rollup function directly): one purchase call results in correct
+        bv_entries + cached totals for the whole ancestor chain in one
+        step.
+- [x] Migration `20260822090000_add_bv_entries`: `bv_entries` table — id,
+      ancestorUserId (FK -> binary_nodes.user_id, RESTRICT), sourceInvestmentId
+      (FK -> investments.id, RESTRICT), leg, amount Decimal(24,8),
+      cycleWeekStart, createdAt. UNIQUE(ancestor_user_id,
+      source_investment_id). Applied via `migrate deploy` + `prisma generate`.
+- [x] `src/lib/binary-cycle.ts`: `saturdayWeekStart(forDate): Date` — walks
+      back to the most recent Saturday 00:00 Asia/Dubai, mirrors
+      interest-rate.ts's isFriday Intl.DateTimeFormat pattern. 4 tests in
+      `binary-cycle.test.ts`, all passing (same-Saturday input, mid-week
+      walk-back, Friday-closes-the-week case, UTC/Dubai boundary case).
+- [x] Found and fixed a real, previously-latent environment gap while
+      building this file: `config.ts`'s env validation silently depended
+      on something ELSE in the module graph importing `./prisma` first,
+      because `@prisma/client`'s runtime bundles `dotenv` and loads `.env`
+      as a side effect of `new PrismaClient()` — `config.ts` itself never
+      loaded `.env`. Every existing test file happened to import
+      `./prisma` transitively, so this never surfaced until
+      `binary-cycle.ts` (a pure function needing only `config.TIMEZONE`,
+      no DB access) didn't. Confirmed with user and fixed: added
+      `import "dotenv/config"` at the top of `config.ts` itself, so any
+      module reading `config.*` is self-sufficient. Verified via
+      `binary-cycle.test.ts` run in complete isolation (no other file),
+      which failed with `DATABASE_URL`/`SEED_ADMIN_*` validation errors
+      before the fix and passes cleanly after.
+- [x] `src/lib/binary-tree.ts`: added `rollupBvForPurchase(investmentId,
+      buyerId, amount, forDate, tx)`. Parses the buyer's binary_nodes
+      `path` into ordered ancestor ids, walks from the buyer's direct
+      parent up to the root; at each ancestor, the leg is read directly
+      off the next path segment's own `position` (LEFT/RIGHT) — not
+      re-derived any other way. Skips (no-op) any ancestor that already
+      has a bv_entries row for this investmentId (replay guard, backed by
+      the UNIQUE constraint). Increments leftBv/rightBv via Prisma's
+      `{ increment: amount }`, not read-then-write, so it stays correct
+      under concurrent purchases. No-ops entirely if the buyer has no
+      binary_nodes row at all (a root user who's never sponsored anyone —
+      no ancestors possible either way).
+- [x] Wired into `src/lib/investments.ts`: `purchasePackage` calls
+      `rollupBvForPurchase` right after `payDirectCommissionInTx`, inside
+      the same transaction, only on the newly-created path — matches the
+      existing Direct Commission wiring pattern exactly.
+- [x] Tests first, `src/lib/bv-rollup.test.ts` (new file, 3 tests, all
+      passing): a purchase at the bottom of a real 4-level tree (built via
+      real registerWithSponsor/spillover, not hand-crafted binary_nodes
+      rows) creates a correctly-legged bv_entries row for every ancestor
+      up to the root, with cached leftBv/rightBv matching exactly, and
+      zero entry for the buyer themselves; a DAILY_INTEREST credit (via
+      the real `accrueDailyInterestForInvestment`) and the purchase's own
+      DIRECT_COMMISSION side effect together still produce exactly one
+      bv_entries row per ancestor (the purchase's own), proving interest
+      accrual specifically adds none; replaying the same investment's BV
+      rollup both end-to-end (via a duplicate `purchasePackage` call,
+      same idempotencyKey) and by directly re-invoking
+      `rollupBvForPurchase` for the same investmentId creates no
+      duplicate bv_entries and does not double-increment any ancestor's
+      cached BV.
+- [x] Audited existing test files per the SCRUM-70 RESTRICT-FK lesson
+      before declaring done: `direct-commission.test.ts` and
+      `users.test.ts` both create investments via sponsored purchases
+      (which now generate bv_entries rows) and both called
+      `investment.deleteMany` in their cleanup — added
+      `bvEntry.deleteMany({ where: { sourceInvestmentId: { in:
+      createdInvestmentIds } } })` before `investment.deleteMany` in both.
+      Confirmed `investments.test.ts` needed no change (uses
+      `registerAsRoot` only, no sponsor, so `rollupBvForPurchase` always
+      no-ops there — zero bv_entries ever created for that file).
+- [x] Full suite: 35 files, 235/235 passing (228 prior + 4 binary-cycle +
+      3 bv-rollup new), including `reconciliation.test.ts` clean. `tsc
+      --noEmit` clean. Verified zero leftover bv_entries/binary_nodes/
+      test.local users after cleanup.
+
+## SCRUM-73: tree visualization UI (react-d3-tree, RTL) — DONE
+
+Confirmed with user before building:
+- Fetch depth capped at a fixed depth (5-6 levels) from the logged-in
+  user's own node, not the whole unbounded subtree — reasonable first
+  version, avoids a slow query/cluttered render for a user with a large
+  downline.
+- RTL mirroring: keep the tree DATA exactly as-is in both locales (LEFT
+  child always first, RIGHT always second, position field never touched)
+  and mirror the rendered SVG visually via `scaleX(-1)` on the container
+  in `/ar`, with a second `scaleX(-1)` on each node's text label group so
+  text reads correctly (double-flip). This keeps LEFT/RIGHT strictly a
+  data fact read from `binary_nodes.position`, never derived from render
+  order or screen side — matches the phase brief's explicit warning.
+
+Plan:
+- [ ] `npm install react-d3-tree` — first graph/chart library in the
+      project (no recharts/d3 precedent to follow). Confirm no peer-dep
+      conflict with React 19.1.0 at install time.
+- [ ] `src/lib/binary-tree.ts`: add `getMySubtree(userId, maxDepth)` — no
+      target-user param (invariant #9, matches every other page's
+      pattern). Loads the user's own binary_nodes row, then recursively
+      (or via repeated `findMany({ where: { parentId: { in: [...] } } })`
+      breadth-by-breadth, bounded by maxDepth) loads descendants down to
+      the depth cap. Returns a plain nested structure: `{ userId, name,
+      position, children: [...] }` — needs each node's `name` (join
+      against `users.name`) for display, not just the raw userId.
+- [ ] Tests first (`binary-tree.test.ts` or new
+      `binary-tree-subtree.test.ts`): a user with no downline gets an
+      empty children array (not an error); a multi-level real tree
+      (built via registerWithSponsor/spillover) returns the correct
+      shape with correct LEFT/RIGHT positions at each level; depth cap is
+      respected (a deeper real branch doesn't appear beyond maxDepth);
+      never includes another user's subtree (ownership/isolation, mirrors
+      the SCRUM-70 cross-sponsor isolation test).
+- [ ] `src/app/[locale]/binary-tree/page.tsx` (server component,
+      `requireSession`-protected, matches referrals/page.tsx structure):
+      loads translations + locale, `requireSession(new Date())`, calls
+      `getMySubtree(user.id, depthCap)`, renders header + a client tree
+      component. Empty/leaf state (no downline at all) handled inside the
+      client component, not a separate page branch.
+- [ ] `binary-tree-view.tsx` (client component, `"use client"`):
+      - Converts the plain subtree shape into react-d3-tree's expected
+        `{ name, attributes, children }` node format. `attributes` carries
+        the position (LEFT/RIGHT) as a data attribute rendered in a
+        custom node label — read directly from the fetched data, never
+        derived from the node's rendered x/y position or tree traversal
+        order.
+      - RTL: wraps the react-d3-tree container in a div with
+        `style={{ transform: locale === "ar" ? "scaleX(-1)" : undefined
+        }}`, and applies the counter `scaleX(-1)` on each custom node's
+        text-rendering group so labels read correctly. Tested explicitly
+        in `/ar` per the phase brief and bilingual-rtl skill — not just a
+        translation-key check.
+      - Custom `renderCustomNodeElement` (not the library's default
+        circle) matching this project's card-based visual language:
+        rounded rect, name, LEFT/RIGHT badge (English word, never
+        translated — matches the glossary rule for MLM structural terms),
+        BV or purchase indicator if easily available.
+      - Empty/leaf state: the logged-in user's own node renders alone
+        with no children, plus a short empty-state message/CTA
+        (translated) below or beside the tree, not just a bare single
+        node with no explanation.
+      - Zoom/pan enabled (react-d3-tree default `zoomable`/`draggable`),
+        since even a depth-capped tree can be wide.
+- [ ] `loading.tsx` skeleton matching the page's shape (header +
+      placeholder tree-shaped skeleton block).
+- [ ] i18n: new `BinaryTree` namespace in both messages/en.json and
+      messages/ar.json in this commit. "LEFT"/"RIGHT" (or however the
+      leg is surfaced) stay English per the glossary (matches Wallet
+      A/B/C, BV, etc. — these are MLM structural terms, not general UI
+      text) — confirm this reading of the glossary rule against the
+      bilingual-rtl skill before finalizing the label text.
+- [ ] RTL pass per lessons.md's recurring category: grep new files for
+      physical left-*/right-*/ml-*/mr-*/pl-*/pr-*/text-left/text-right;
+      explicit `flex flex-row items-center gap-2` for any icon+text pair
+      outside the SVG itself.
+- [ ] Manual verification in the running dev container: a user with zero
+      downline (empty/leaf state) and a user with a real multi-level
+      downline (built via the real placement algorithm, not fabricated
+      tree JSON), in both `/en/binary-tree` and `/ar/binary-tree` —
+      specifically confirm the SAME node's LEFT/RIGHT label and BV/position
+      data are identical in both locales while the visual left-right
+      screen position mirrors, proving the render is a pixel-level flip
+      and not a data reordering.
+- [x] `npm install react-d3-tree` (v3.6.6) — first graph/chart library in
+      the project. No peer-dep conflict with React 19.1.0 (its
+      peerDependencies range explicitly covers 16.x-19.x).
+- [x] `src/lib/binary-tree.ts`: added `getMySubtree(userId, maxDepth)` +
+      exported `SubtreeNode` type. No target-user param (invariant #9).
+      Breadth-by-breadth fetch (one query per depth level via
+      `findMany({ where: { parentId: { in: [...] } } })`), not a single
+      deep nested Prisma `include` chain or an unbounded recursive query.
+      Returns `null` if the user has no binary_nodes row at all (never
+      placed) — the UI's empty-state trigger. `position` is copied
+      verbatim from `binary_nodes.position` for every node (root's own
+      position is always null in its own subtree — not meaningful there).
+      5 tests in `binary-tree-subtree.test.ts`, all passing: null for an
+      unplaced user; leaf state (empty children) for a user with a
+      downline of their own that has no further downline; correct
+      multi-level shape with correct LEFT/RIGHT at each level; depth cap
+      respected against a real deeper branch; cross-sponsor isolation.
+- [x] `src/app/[locale]/binary-tree/{page.tsx, binary-tree-view.tsx,
+      loading.tsx}` — server component matches referrals/page.tsx's
+      structure exactly (`requireSession(new Date())`, no target-user
+      param). Depth capped at 5. Client component converts the plain
+      subtree into react-d3-tree's `RawNodeDatum` shape, copying
+      `position` straight from the fetched data into each node's
+      `attributes` — never derived from array order or recursion order.
+- [x] RTL mirroring: data (child order, position field) is IDENTICAL in
+      both locales. Only the rendered SVG container gets
+      `transform: scaleX(-1)` in `/ar` (via a locale check, not a CSS
+      media query, since it must track next-intl's locale not the OS/
+      browser direction), with a second counter `scale(-1, 1)` on each
+      node's text-label `<g>` so labels render un-mirrored (readable)
+      while the tree layout itself flips. `translate.x` for react-d3-tree
+      is also flipped (`dimensions.width - 40` in RTL vs `40` in LTR) so
+      the root anchors to the correct starting edge post-mirror.
+      LEFT/RIGHT badge text stays the literal English word in both
+      locales (MLM structural term, not translated, per the bilingual-rtl
+      glossary rule — same treatment as Wallet A/B/C).
+- [x] i18n: new `BinaryTree` namespace added to both messages/en.json and
+      messages/ar.json in this commit. Validated both files as parseable
+      JSON. Grepped the new route's files for physical
+      left-*/right-*/ml-*/mr-*/pl-*/pr-*/text-left/text-right — zero
+      matches.
+- [x] `tsc --noEmit` clean throughout.
+- [x] Manual verification: no headless-browser/screenshot tool is
+      available in this environment, so code-level checks were done
+      first (route compiles, serves 200 for both locales, correct data
+      reaches the client bundle, no server-side runtime errors in
+      container logs) and flagged explicitly to the user as an
+      incomplete substitute for an actual visual check, rather than
+      claiming full verification. Set up two real verification users via
+      a scratch script (a 3-level real tree built through
+      registerWithSponsor/spillover — Root -> Left Child/Right Child ->
+      Left Grandchild/Right Grandchild — plus a separate user with zero
+      downline for the empty state) and gave the user login credentials
+      to check in their own browser after their first session cookie
+      expired mid-verification.
+      User confirmed: tree renders correctly in both `/en` and `/ar`,
+      RTL mirroring looks right, LEFT/RIGHT badges are consistent between
+      locales for the same node. One data point flagged for explicit
+      confirmation: "Right Grandchild" (under Right Child) shows a LEFT
+      badge — verified directly against real binary_nodes rows via a
+      scratch query and confirmed correct, not a bug: `position` is
+      relative to a node's own DIRECT parent's two legs, never the
+      overall tree side. Right Grandchild is Right Child's first-ever
+      registered referral, so per SCRUM-70's placement algorithm (open
+      direct slot always wins, LEFT before RIGHT) it fills Right Child's
+      own LEFT slot — a node several levels down the "right side" of the
+      tree can correctly carry a LEFT position of its own. This is
+      exactly what `getMySubtree`'s docstring and the phase brief's core
+      rule require (position is a data fact tied to direct placement, not
+      "which half of the screen the node visually falls on").
+- [x] Full suite: 36 files, 240/240 passing (235 prior + 5 new
+      binary-tree-subtree tests), including `reconciliation.test.ts`
+      clean. `tsc --noEmit` clean.
+- [x] Cleaned up all 6 manually-created verification users (root, 4
+      descendants, empty-state user) via `cleanupLedgerEntriesForUsers` +
+      explicit session/securityQuestion/walletAccount/binaryNode cleanup
+      before user deletion, confirmed via the cleanup script's own
+      "Deleted users: 6" output. Scratch scripts deleted after use;
+      `git status` shows no trace.
+
+## SCRUM-74: Phase 7 exit test — RUN AND PASSED
+
+Ran a real scratch script (`.scratch_exit_test_phase7.ts`, deleted after —
+matches the Phase 3/5/6 exit-test convention) directly against the dev
+database, using real lib functions (`registerAsRoot`/`registerWithSponsor`,
+`adminCreditWalletB`, `purchasePackage`, `accrueDailyInterestForInvestment`),
+not a re-run of the permanent unit suite. Migration state verified clean
+first (`prisma migrate status`).
+
+### Results (24/24 assertions passed)
+
+**Scenario 1 — 4-level tree, bottom purchase rolls up BV on every
+ancestor's correct leg:**
+Built root -> a (root's LEFT; a sibling fills root's RIGHT so this isn't
+just a default) -> b (a's LEFT) -> buyer (b's LEFT), then an $8,000
+purchase by buyer.
+- bv_entries rows exist for b, a, and root — all three, not just the
+  direct parent
+- All three entries: leg == LEFT (matches the buyer's real descent path,
+  not assumed), amount == exactly 8000
+- No bv_entries row for the buyer's own userId as an "ancestor" of itself
+- Cached leftBv/rightBv on b/a/root all match the bv_entries sum exactly
+  (leftBv == 8000, rightBv == 0 for every ancestor — the RIGHT sides
+  those ancestors' siblings occupy are correctly unaffected)
+
+**Scenario 2 — commission credit and interest accrual create zero
+bv_entries:**
+- Direct Commission fired automatically as part of the scenario-1
+  purchase (buyer's sponsor b received it) — confirmed paid, then
+  confirmed it added zero additional bv_entries rows beyond the
+  purchase's own 3
+- Daily interest accrued on the same investment (past profitStartsAt) —
+  confirmed it actually credited interest, then confirmed zero additional
+  bv_entries rows
+- b's cached leftBv stayed exactly 8000 after both — no noise leaked into
+  the cached BV totals from non-purchase money movement
+
+**Scenario 3 — new registration placed on the lower-BV side of a
+DELIBERATELY IMBALANCED tree (not a fresh all-zero tree):**
+- Built a sponsor with both direct slots already filled (LEFT/RIGHT
+  children), then manually set leftBv=50000, rightBv=1000 — RIGHT
+  deliberately the weaker leg
+- A new referral correctly spilled into the RIGHT child's own subtree
+  (landed on RIGHT child's open LEFT slot), NOT under the stronger LEFT
+  leg
+- Re-imbalanced the same sponsor the other way (leftBv=500,
+  rightBv=90000 — now LEFT is weaker) and registered again: the very
+  next referral correctly spilled into LEFT instead — proves the
+  placement algorithm genuinely reads the live BV comparison each time,
+  not a fixed default that happened to look right once
+
+### Cleanup and regression check
+- Script's own cleanup used `cleanupLedgerEntriesForUsers`
+  (idempotencyKey-scoped, SYSTEM_EXTERNAL-safe) per the standing
+  structural rule, plus explicit `bvEntry`/`binaryNode` cleanup ordered
+  before `investment`/`user` deletion (RESTRICT FKs, per the SCRUM-70/71
+  lessons) — reported "Cleaned up 10 users, 1 packages, 1 investments."
+- Verified zero leftover `phase7exit` users and zero leftover
+  `bv_entries` rows in the DB after the script's own cleanup ran, via a
+  separate scratch check, before even getting to the full-suite pass.
+- Scratch scripts deleted; `git status` confirms no trace.
+- Full suite: 36 files, 240/240 passing. `tsc --noEmit` clean.
+- `reconciliation.test.ts` (the whole-database solvency check) explicitly
+  re-run standalone as the final step, per the standing rule — 3/3
+  passing on its own, not just bundled into the full-run count.
+
+**PHASE 7 EXIT TEST: ALL 3 SCENARIOS / 24 ASSERTIONS PASSED. Full suite
+clean, including standalone whole-database reconciliation.**
+
+Phase 7 is complete pending user confirmation in the operation-room chat
+per CLAUDE.md's build-order rule.
+
 # Phase 6 — Sponsor Tree & Direct Commission
 
 ## SCRUM-63: commission_config table — DONE

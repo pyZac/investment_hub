@@ -101,6 +101,8 @@ model User {
 
   savingLots SavingLot[]
 
+  binaryNode BinaryNode?
+
   @@map("users")
 }
 
@@ -292,6 +294,8 @@ model Investment {
   // already-created investment without needing its own idempotencyKey column.
   referenceId String? @unique @map("reference_id")
 
+  bvEntries BvEntry[]
+
   @@index([userId])
   @@index([packageId])
   @@map("investments")
@@ -430,6 +434,74 @@ model CommissionConfig {
   // work; NULL is never equal to NULL even in a partial index). NOT declared
   // as @@unique here for the same reason as InterestRateConfig.
   @@map("commission_config")
+}
+
+enum BinaryPosition {
+  LEFT
+  RIGHT
+}
+
+// The placement tree (Decision: Part 3 "Two Separate Trees"). Independent from
+// users.sponsor_id (the sponsor tree) — never join the two. userId is both the
+// primary key and the 1:1 link to User, since every user has at most one node.
+model BinaryNode {
+  userId String @id @map("user_id")
+  user   User   @relation(fields: [userId], references: [id])
+
+  parentId String?         @map("parent_id")
+  parent   BinaryNode?     @relation("BinaryTree", fields: [parentId], references: [userId])
+  children BinaryNode[]    @relation("BinaryTree")
+  position BinaryPosition?
+
+  // Materialized path of ancestor user_ids, e.g. "/cuid1/cuid2/cuid3/" (root's
+  // own segment included), for fast ancestor/descendant prefix queries without
+  // a recursive CTE. Maintained on insert; never rewritten afterward since
+  // nodes never move once placed.
+  path  String
+  depth Int
+
+  // Cached totals of THIS node's own two legs (not the whole subtree below
+  // it) — avoids summing the subtree on every placement/rollup read. Placed
+  // here (SCRUM-70) at 0/0 for every new node; incremented by real amounts
+  // only by BV rollup on purchase (SCRUM-71, per docs/mlm_rules_log.md
+  // Section 5's BV definition — package purchases only, never profits/
+  // commissions/rank rewards/transfers).
+  leftBv  Decimal @default(0) @map("left_bv") @db.Decimal(24, 8)
+  rightBv Decimal @default(0) @map("right_bv") @db.Decimal(24, 8)
+
+  bvEntries BvEntry[]
+
+  @@index([parentId])
+  @@index([path])
+  @@map("binary_nodes")
+}
+
+// One row per (ancestor, purchase) — the BV rollup this purchase generated
+// for that specific ancestor's tree. Only real package purchases (including
+// reinvestment) generate BV; never profits, commissions, rank rewards, or
+// transfers (docs/mlm_rules_log.md Section 5). UNIQUE(ancestorUserId,
+// sourceInvestmentId) is both the "one entry per ancestor per purchase"
+// invariant and the replay guard — no separate idempotency key needed since
+// this table has no money-movement side effect of its own.
+model BvEntry {
+  id String @id @default(cuid())
+
+  ancestorUserId String     @map("ancestor_user_id")
+  ancestor       BinaryNode @relation(fields: [ancestorUserId], references: [userId])
+
+  sourceInvestmentId String     @map("source_investment_id")
+  sourceInvestment   Investment @relation(fields: [sourceInvestmentId], references: [id])
+
+  leg    BinaryPosition
+  amount Decimal        @db.Decimal(24, 8)
+
+  cycleWeekStart DateTime @map("cycle_week_start")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([ancestorUserId, sourceInvestmentId])
+  @@index([cycleWeekStart])
+  @@map("bv_entries")
 }
 
 model AdminAction {
