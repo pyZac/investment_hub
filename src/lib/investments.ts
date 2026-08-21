@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { postTransaction } from "./ledger-transaction";
+import { payDirectCommissionInTx } from "./direct-commission";
 
 const purchasePackageInputSchema = z.object({
   packageId: z.string(),
@@ -34,6 +35,18 @@ function addMonths(date: Date, months: number) {
  * entries this call writes — referenceType "investment" / referenceId set to
  * idempotencyKey. A replay looks up that ledger entry first and returns the
  * already-created investment rather than writing anything again.
+ *
+ * Direct Commission (SCRUM-66): after creating the investment, calls
+ * payDirectCommissionInTx in this same transaction — not payDirectCommission
+ * (which opens its own, separate transaction) and not as a follow-up call
+ * after this function returns. A purchase and its resulting commission must
+ * commit or roll back together: if anything after the investment write
+ * fails, Prisma rolls back the entire transaction, so no half-completed
+ * state (investment created but commission silently skipped, or vice versa)
+ * is ever visible. Only called on the newly-created path, not the
+ * already-processed replay path — a replay's commission (if any) was
+ * already resolved on the original call and payDirectCommissionInTx's own
+ * per-split idempotency keys would make a second call harmless but wasted.
  */
 export async function purchasePackage(userId: string, input: PurchasePackageInput) {
   const data = purchasePackageInputSchema.parse(input);
@@ -104,6 +117,8 @@ export async function purchasePackage(userId: string, input: PurchasePackageInpu
         referenceId: data.idempotencyKey,
       },
     });
+
+    await payDirectCommissionInTx(investment.id, data.forDate, tx);
 
     return { alreadyProcessed: false as const, investment };
   });

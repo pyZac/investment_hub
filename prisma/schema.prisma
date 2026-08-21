@@ -408,6 +408,30 @@ model SavingLot {
   @@map("saving_lots")
 }
 
+model CommissionConfig {
+  id String @id @default(cuid())
+
+  directRate            Decimal @map("direct_rate") @db.Decimal(24, 8)
+  directCommissionSplit Decimal @map("direct_commission_split") @db.Decimal(24, 8)
+  directSavingSplit     Decimal @map("direct_saving_split") @db.Decimal(24, 8)
+  binaryRate            Decimal @map("binary_rate") @db.Decimal(24, 8)
+
+  binaryCarryForwardExpiryMonths Int @default(6) @map("binary_carry_forward_expiry_months")
+
+  effectiveFrom DateTime  @map("effective_from")
+  effectiveTo   DateTime? @map("effective_to")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // "At most one active row" (effective_to IS NULL) enforced by a hand-written
+  // partial unique index on a constant expression — see
+  // 20260821120000_add_commission_config/migration.sql and the identical
+  // interest_rate_config pattern above (indexing effective_to itself doesn't
+  // work; NULL is never equal to NULL even in a partial index). NOT declared
+  // as @@unique here for the same reason as InterestRateConfig.
+  @@map("commission_config")
+}
+
 model AdminAction {
   id              String          @id @default(cuid())
   adminId         String          @map("admin_id")

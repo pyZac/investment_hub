@@ -108,5 +108,30 @@
     "errorAlreadyReleased": "تم تحرير رأس مال هذا الاستثمار بالفعل.",
     "errorNotOwned": "تعذر العثور على هذا الاستثمار.",
     "errorGeneric": "حدث خطأ ما. الرجاء المحاولة مرة أخرى."
+  },
+  "Referrals": {
+    "pageTitle": "الإحالات",
+    "pageDescription": "شارك رمز الإحالة الخاص بك وتابع إحالاتك المباشرة وسجل Direct Commission.",
+
+    "referralCodeHeading": "رمز الإحالة الخاص بك",
+    "referralCodeDescription": "شارك هذا الرمز مع أي شخص يسجل تحتك كراعٍ له.",
+    "referralCodeLabel": "رمز الإحالة",
+    "copyCode": "نسخ",
+    "copied": "تم النسخ",
+
+    "referralsHeading": "الإحالات المباشرة",
+    "referralsDescription": "الأشخاص الذين قمت برعايتهم مباشرةً.",
+    "joinedOn": "تاريخ الانضمام",
+    "statusActive": "نشط",
+    "statusNoPurchaseYet": "لا يوجد شراء بعد",
+    "statusSuspended": "موقوف",
+    "referralsEmptyStateTitle": "لا توجد إحالات بعد",
+    "referralsEmptyStateDescription": "شارك رمز الإحالة أعلاه للبدء في تنمية شبكتك.",
+
+    "commissionHistoryHeading": "سجل Direct Commission",
+    "commissionHistoryDescription": "المدفوعات التي تكسبها عند إجراء إحالاتك المباشرة أول عملية شراء لهم.",
+    "destinationWalletC": "Wallet C",
+    "destinationSaving": "SAVING",
+    "commissionHistoryEmptyState": "لم تكسب أي Direct Commission بعد."
   }
 }

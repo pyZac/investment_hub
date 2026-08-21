@@ -166,3 +166,37 @@ export async function adminCreateUser(actingAdminId: string, input: AdminCreateU
     return user;
   });
 }
+
+/**
+ * A user's own direct referrals (sponsor tree, one level — invariant #5:
+ * never joins against binary_nodes), newest first. Ownership is enforced by
+ * construction — sponsorId is the only filter, no separate target-user
+ * param exists to view someone else's referrals (invariant #9).
+ *
+ * `hasPurchased` is derived from `_count.investments` rather than a stored
+ * flag — whether a referral has ever bought a package is a fact fully
+ * derivable from the investments table, so there's nothing to keep in sync.
+ */
+export async function listReferralsForUser(sponsorId: string) {
+  const referrals = await prisma.user.findMany({
+    where: { sponsorId },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      createdAt: true,
+      suspendedAt: true,
+      _count: { select: { investments: true } },
+    },
+  });
+
+  return referrals.map((r) => ({
+    id: r.id,
+    name: r.name,
+    email: r.email,
+    createdAt: r.createdAt,
+    suspendedAt: r.suspendedAt,
+    hasPurchased: r._count.investments > 0,
+  }));
+}

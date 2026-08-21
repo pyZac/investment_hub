@@ -1,3 +1,517 @@
+# Phase 6 — Sponsor Tree & Direct Commission
+
+## SCRUM-63: commission_config table — DONE
+
+- [x] Added `CommissionConfig` model (`commission_config`, migration
+      `20260821120000_add_commission_config`, applied via `migrate deploy`
+      per the standing hand-edited-migration rule) — directRate,
+      directCommissionSplit, directSavingSplit, binaryRate,
+      binaryCarryForwardExpiryMonths (default 6), effectiveFrom, effectiveTo.
+      Rates stored as whole percentages (8.0, not 0.08), matching
+      InterestRateConfig's existing monthlyRate convention.
+- [x] "At most one active row" enforced via a partial unique index on a
+      constant expression `((TRUE)) WHERE effective_to IS NULL`, same
+      corrected pattern as `interest_rate_config` (indexing the nullable
+      column itself doesn't work — verified live by inserting a real
+      second active row and confirming it's rejected, not just trusting
+      `\d` output).
+- [x] Seeded: direct 8% (5/3 split), binary 8%, 6-month carry-forward
+      expiry, effective_from = now, effective_to = NULL.
+- [x] `prisma migrate status` clean, `tsc --noEmit` clean.
+
+## SCRUM-64: first-purchase detection function — DONE
+
+- [x] `src/lib/direct-commission.ts`: `isDirectCommissionTriggerPurchase
+      (investmentId, tx: Prisma.TransactionClient)`. Deliberately not named
+      `isFirstPurchase` — verbose/scoped name so Phase 9's MRV logic (every
+      purchase counts, not just first, per docs/mlm_rules_log.md Section 6)
+      can never be tempted to reuse or unify with it. `tx` is required (not
+      optional like postTransaction's pattern) since correctness depends on
+      running inside the same DB transaction as the eventual commission
+      payout — a bare-prisma default would reintroduce the exact
+      same-instant race the task called out.
+      Order: `purchasedAt ASC, createdAt ASC, id ASC` — three-level
+      deterministic tiebreak so two investments sharing the same
+      `purchasedAt` (fabricated/backfilled dates, or same-millisecond
+      concurrent inserts) still resolve to exactly one "first", never both
+      or neither, and never flip-flop across repeated calls.
+- [x] `src/lib/direct-commission.test.ts`: 4 tests — a user's only purchase
+      is the trigger; a second purchase (different amount, separately
+      funded) is not, while the first stays true; two purchases sharing
+      the exact same instant resolve to exactly one trigger and stay
+      stable across repeated re-checks; a nonexistent investment id throws
+      rather than resolving ambiguously.
+- [x] Explicitly out of scope for this task (per the ticket's own framing):
+      wiring this into `purchasePackage` or triggering the actual
+      commission payout — that's the next ticket.
+- [x] Found and fixed an unrelated pre-existing issue while running the
+      full suite: `daily-interest-job.test.ts`'s "true first-ever run"
+      test failed (expected 0 prior `job_runs` rows, found 226) —
+      confirmed via `git stash` that this reproduces identically with
+      SCRUM-64's changes fully removed, so it's leftover data, not a
+      regression. Root cause matched the exact SCRUM-51/52 pattern already
+      logged in lessons.md: 226 `job_runs` rows from a prior interrupted
+      manual/test run (`started_at` all clustered at one timestamp,
+      `period_key` spanning 2026-01-01 through 2026-08-14), left behind in
+      the shared dev DB. Deleted those 226 rows (`DELETE FROM job_runs
+      WHERE job_type = 'daily_interest'`), re-ran the previously-failing
+      test file alone (clean), then the full suite once more.
+- [x] Also hit an infrastructure blip mid-verification: Docker Desktop
+      became unresponsive partway through a full-suite run, which failed
+      94 tests with `ECONNREFUSED`/"database server not running" — not a
+      code issue. Confirmed via `docker compose ps` (failed to reach the
+      Docker API), waited for the user to restart Docker Desktop, then
+      confirmed all 3 containers healthy again before re-running.
+- [x] Full suite (post Docker restart + job_runs cleanup): 32 files,
+      207/207 passing, including `daily-interest-job.test.ts` and
+      `reconciliation.test.ts` clean. `tsc --noEmit` clean. Verified zero
+      leftover `direct-commission-*` test users and no orphaned
+      investments after cleanup.
+
+Plan:
+- [ ] New file `src/lib/direct-commission.ts` (doesn't exist yet — this is
+      the first Phase 6 lib file).
+- [ ] Function named `isDirectCommissionTriggerPurchase` — deliberately
+      verbose/scoped name, NOT `isFirstPurchase`, so it can never be
+      reached for by Phase 9's MRV logic (which counts every purchase,
+      not just the first — a different trigger for a different purpose,
+      per the phase brief's explicit warning not to unify these).
+      Signature: `isDirectCommissionTriggerPurchase(investmentId: string,
+      tx: Prisma.TransactionClient): Promise<boolean>` — `tx` is REQUIRED,
+      not optional (unlike postTransaction's pattern), because correctness
+      here depends on running inside the same DB transaction as the
+      commission payout that will follow it; a caller silently defaulting
+      to a non-transactional read would reintroduce the exact race the
+      task calls out.
+      Logic: load the target investment (userId, purchasedAt, id, createdAt).
+      Query that user's investments ordered by `purchasedAt ASC, createdAt
+      ASC, id ASC` (three-level deterministic tiebreak — purchasedAt ties
+      are possible with fabricated/backfilled dates, createdAt ties are
+      possible at sub-millisecond granularity in rare concurrent-insert
+      cases, id is the final deterministic tiebreak since cuids are unique).
+      Take the first row's id; return whether it equals the target
+      investment's id.
+- [ ] Tests first (`direct-commission.test.ts`):
+      - a user's very first (only) purchase is identified as the trigger
+      - a second purchase by the same user (any amount, any funding
+        source — simulate by funding B via commission-style credit
+        rather than admin credit) is correctly identified as NOT the
+        trigger, while the first one still is
+      - two purchases sharing the exact same `purchasedAt` instant
+        (fabricated identical date) resolve deterministically: exactly
+        one is the trigger, never both, never neither, and re-running the
+        check multiple times gives the same answer every time (no
+        flip-flopping from query-plan nondeterminism)
+      - a user with zero investments (edge case, shouldn't be called in
+        practice but must not crash ambiguously) — decide behavior: throw,
+        since calling this before the investment row exists is a misuse
+- [ ] Full suite + `tsc --noEmit` after.
+- [ ] Explicitly NOT doing in this task (scope): wiring this into
+      `purchasePackage` or triggering the actual commission payout — that's
+      the next task. This ticket is the detection function alone, per the
+      task description.
+
+## SCRUM-65: Direct Commission payout logic — DONE
+
+- [x] `src/lib/direct-commission.ts`: added `payDirectCommission(investmentId,
+      forDate)`. Uses `isDirectCommissionTriggerPurchase` as the sole gate
+      (never re-derives first-purchase logic itself). No-ops (not throws)
+      for: not-first purchase, no sponsor, suspended buyer, suspended
+      sponsor — these are ordinary outcomes, not error conditions.
+      Commission math reads the active `commission_config` row's
+      `directCommissionSplit`/`directSavingSplit` fields directly (5.0/3.0),
+      not derived from `directRate`.
+- [x] Real bug caught by the tests (not by review): a single
+      `postTransaction` call with all 4 entries under one shared
+      `direct:{investmentId}` key fails — the ledger's idempotency
+      uniqueness is `(key, coalesced_user, wallet, direction)`, and both
+      splits' SYSTEM_EXTERNAL sides are `userId: null` /
+      `wallet: SYSTEM_EXTERNAL` / `direction: DEBIT`, so under one shared
+      key they collide with *each other*, not just with a genuine replay.
+      Fixed by splitting into two `postTransaction` calls with distinct
+      deterministic keys (`direct:{investmentId}:c` and
+      `direct:{investmentId}:saving`), both inside the same outer
+      transaction so the whole operation stays atomic; the `saving_lot`
+      creation is guarded by its own `findFirst` check
+      (`sourceInvestmentId`) rather than either call's `alreadyProcessed`
+      flag alone, so a partial-retry scenario (one split's key already
+      used, the other not) still can't double-create the lot.
+      Money-materializing pattern matches `adminCreditWalletB`: CREDIT
+      sponsor / DEBIT SYSTEM_EXTERNAL — Direct Commission is new money
+      entering for the sponsor, not a transfer out of the buyer's balance
+      (buyer already paid full price via purchasePackage's own B->A
+      entries).
+- [x] `src/lib/direct-commission.test.ts` (extended, `payDirectCommission`
+      describe block): 6 new tests, all passing — exact 5%/3% split on a
+      $10,000 purchase (sponsor C +500, SAVING +300, matching saving_lot
+      with correct amount/sourceInvestmentId/unlocksAt = purchase date + 3
+      months); no-sponsor buyer triggers nothing; a second (non-first)
+      purchase triggers nothing regardless of amount while the first
+      purchase's payout stays correctly in place; suspended sponsor blocks
+      it; suspended buyer blocks it; replaying the same investmentId
+      creates no duplicate ledger entries and no duplicate saving_lot.
+- [x] Full suite: 32 files, 213/213 passing (207 prior + 6 new), including
+      `reconciliation.test.ts` clean. `tsc --noEmit` clean. Verified zero
+      leftover `direct-commission-*` test users and zero leftover
+      `saving_lots` rows after cleanup.
+- [x] Explicitly out of scope, per the ticket (not attempted): wiring
+      `payDirectCommission` as an automatic call inside `purchasePackage`
+      itself — this ticket built the payout function; whether/where it's
+      invoked from the purchase flow is presumably the next ticket.
+
+Plan:
+- [ ] `src/lib/direct-commission.ts`: add `payDirectCommission(investmentId:
+      string, forDate: Date): Promise<...>` (opens its own
+      `prisma.$transaction`, matching `purchasePackage`'s pattern — this is
+      called as a follow-up step after `purchasePackage` resolves, not
+      threaded through its transaction, since `purchasePackage` doesn't
+      expose its `tx` to callers today; not this ticket's scope to change
+      that).
+      Logic:
+      1. Load the investment (userId = buyer, amount).
+      2. `isDirectCommissionTriggerPurchase(investmentId, tx)` — if false,
+         return a no-op result. Not-first purchases never reach the payout
+         logic at all, regardless of amount (matches the exit test's
+         "any amount" framing for the non-triggering case).
+      3. Load the buyer; if buyer.sponsorId is null, no-op (no sponsor to
+         pay). Load the sponsor by sponsorId.
+      4. Skip (no-op, not an error) if either buyer or sponsor is
+         suspended (`suspendedAt !== null`) — matches the Phase 5
+         suspension-skip pattern used elsewhere (daily interest, binary
+         legs), not a thrown error.
+      5. Read the currently active `commission_config` row
+         (`effective_to: null`).
+      6. `commissionAmount = investment.amount * directCommissionSplit /
+         100`, `savingAmount = investment.amount * directSavingSplit /
+         100` — both computed from the config's split fields directly
+         (5.0 and 3.0 today), not derived from directRate, since the
+         splits are the actual payout percentages and directRate is
+         effectively documentation that they sum to it.
+      7. One `postTransaction` call with 4 entries (CREDIT sponsor's C +
+         DEBIT SYSTEM_EXTERNAL for commissionAmount, CREDIT sponsor's
+         SAVING + DEBIT SYSTEM_EXTERNAL for savingAmount), matching the
+         `adminCreditWalletB`/SYSTEM_EXTERNAL pattern — Direct Commission
+         is new money materializing for the sponsor, not a transfer out of
+         the buyer's own balance (the buyer already paid full price via
+         purchasePackage's separate B->A entries). All 4 entries share ONE
+         idempotencyKey `direct:{investmentId}` in a single
+         postTransaction call (not two separate calls) so the replay guard
+         covers both splits atomically — two separate calls would let one
+         split's idempotency succeed while the other independently
+         replays.
+         entryType DIRECT_COMMISSION for the C-side pair, DIRECT_SAVING
+         for the SAVING-side pair (both enums already exist in schema).
+         referenceType "investment", referenceId = investmentId on all 4.
+      8. In the same transaction, create a `saving_lot` row: userId =
+         sponsor.id, amount = savingAmount, sourceInvestmentId =
+         investmentId (the field Phase 5 pre-added exactly for this),
+         unlocksAt = forDate + 3 months, createdAt = default now.
+      9. Skip/no-op cases (no sponsor, suspended party, not-first-purchase)
+         must NOT create a saving_lot or ledger entries, and must NOT
+         throw — a normal purchase by a root user or a second purchase is
+         an expected, common case, not an error condition.
+- [ ] Tests first (`direct-commission.test.ts`, extending the existing
+      file): a qualifying first purchase with an active, unsuspended
+      sponsor splits and credits correctly (sponsor C +5% exact amount,
+      sponsor SAVING +3% exact amount, one matching saving_lot with
+      correct amount/sourceInvestmentId/unlocksAt = purchase date + 3
+      months); a buyer with no sponsor triggers nothing (zero ledger
+      entries, zero saving_lots, no error); a second (non-first) purchase
+      by an already-triggered buyer triggers nothing regardless of amount,
+      even though that same buyer's sponsor exists and is eligible;
+      suspended sponsor blocks the commission (buyer active, sponsor
+      suspended -> no-op); suspended buyer blocks the commission (mirror
+      case); replaying the same investmentId a second time creates no
+      duplicate ledger entries and no duplicate saving_lot.
+- [ ] `cleanupLedgerEntriesForUsers` for both buyer and sponsor ids in
+      test cleanup (SYSTEM_EXTERNAL-safe pattern, mandatory per
+      lessons.md). Explicit `savingLot.deleteMany` cleanup for
+      sponsor-created lots (new table this task writes to, not covered by
+      the existing investments.test.ts-style cleanup list).
+- [ ] Full suite + `tsc --noEmit` after. Re-check `job_runs`/leftover-data
+      state is still clean (per the SCRUM-64 cleanup) before declaring
+      done, not just this file's own tests green.
+
+## SCRUM-67: referral/commission UI — DONE
+
+Confirmed with user: no `/register` UI route exists yet (Phase 10 work per
+build_plan.md), so the referral "link" is displayed as the sponsor's raw
+user id (a copyable code), not a fabricated full URL to a page that would
+currently 404.
+
+Also confirmed by survey: there is no app-wide nav/sidebar anywhere yet
+(layout.tsx only has a language switcher) — matches the existing
+packages/investments/withdrawals precedent of direct-URL-only pages, so no
+nav link is added here either.
+
+Plan:
+- [ ] `src/lib/users.ts`: add `listReferralsForUser(sponsorId: string)` —
+      `prisma.user.findMany({ where: { sponsorId }, orderBy: { createdAt:
+      "desc" } })`, ownership enforced by construction (matches
+      `listInvestmentsForUser`'s pattern exactly). Needs each referral's
+      `suspendedAt` (for status) and whether they've made a purchase yet
+      (join/include a minimal investments existence check) — decide at
+      build time whether that's a separate query or an `_count` include.
+- [ ] `src/lib/direct-commission.ts`: add
+      `listDirectCommissionHistoryForUser(userId: string)` — reads
+      `ledgerEntry.findMany({ where: { userId, entryType: {in:
+      [DIRECT_COMMISSION, DIRECT_SAVING]}, direction: "CREDIT" },
+      orderBy: { createdAt: "desc" } })` (sponsor-side CREDIT rows only,
+      not the SYSTEM_EXTERNAL DEBIT side) — this is a new read function,
+      not reusing anything existing verbatim.
+- [ ] New route `src/app/[locale]/referrals/page.tsx` (server component,
+      `requireSession`-protected, matches withdrawals/page.tsx structure):
+      loads translations + locale, `requireSession(new Date())`,
+      `Promise.all` for referrals list + commission history, renders:
+      - referral code section (the user's own id, copy button)
+      - direct referrals list (name/email masked appropriately, status
+        badge: active/purchased vs suspended vs no purchase yet)
+      - commission history list (amount, wallet C vs SAVING, date,
+        referencing which referral triggered it if easily joinable)
+      Each section has its own empty state.
+- [ ] `referral-code-card.tsx` (client component, for the copy-to
+      -clipboard interaction only — no server action needed, this page has
+      no destructive/financial action, purely read + client-side copy).
+- [ ] `referrals-list.tsx`: card grid or list matching
+      investment-list.tsx's card pattern, status badge function
+      (`default`/`secondary`/`destructive`) extended for this page's own
+      referral-status semantics — not reusing withdrawal's status badge
+      function directly (different status vocabulary).
+- [ ] `commission-history-list.tsx`: matches b-exit-status-list.tsx's list
+      pattern (amount, date, wallet destination badge).
+- [ ] `loading.tsx` skeleton matching the page's shape.
+- [ ] i18n: new `Referrals` namespace in both messages/en.json and
+      messages/ar.json in this commit. Wallet C/SAVING/"Direct Commission"
+      stay English per glossary; everything else translated.
+- [ ] RTL pass per lessons.md's recurring category: every icon+text pair
+      gets explicit `flex flex-row items-center gap-2`; grep new files for
+      physical left-*/right-*/ml-*/mr-*/pl-*/pr-*/text-left/text-right
+      before considering done.
+- [ ] Manual verification in the running dev container: a sponsor with 0
+      referrals (empty states), a sponsor with >=1 referral who has
+      purchased (commission history populated) and >=1 who hasn't yet (no
+      purchase), in both `/en/referrals` and `/ar/referrals`.
+- [x] `src/lib/users.ts`: added `listReferralsForUser(sponsorId)` —
+      `prisma.user.findMany({ where: { sponsorId } })`, newest first,
+      returns `hasPurchased` derived from `_count.investments` (nothing to
+      keep in sync — fully derivable). 4 new tests in `users.test.ts`:
+      correct scoping (excludes an unrelated root user), empty array for
+      no referrals, `hasPurchased` true/false correctly split across a
+      real buyer vs non-buyer, suspended referral's `suspendedAt` reflected.
+- [x] `src/lib/direct-commission.ts`: added
+      `listDirectCommissionHistoryForUser(userId)` — CREDIT-only
+      DIRECT_COMMISSION/DIRECT_SAVING entries, newest first; explicitly
+      excludes the paired SYSTEM_EXTERNAL DEBIT side (same double-entry
+      convention as every other ledger query in this codebase). 3 new
+      tests: both C and SAVING sides returned correctly with matching
+      investmentId, empty array with no history, never leaks another
+      user's entries.
+- [x] Built the full page: `src/app/[locale]/referrals/{page.tsx,
+      referral-code-card.tsx, referrals-list.tsx,
+      commission-history-list.tsx, loading.tsx}`. Confirmed with user: no
+      `/register` route exists yet (Phase 10), so the referral code is
+      displayed as the sponsor's raw user id with a copy button, not a
+      fabricated URL. Confirmed by survey: no app-wide nav exists anywhere
+      yet, so no nav link added — matches the existing direct-URL-only
+      precedent from packages/investments/withdrawals.
+- [x] Full `Referrals` i18n namespace added to both messages/en.json and
+      messages/ar.json in this commit. "Direct Commission"/"Wallet
+      C"/"SAVING" kept English per glossary in both locales (verified live
+      in the Arabic render, not just in the JSON).
+- [x] RTL pass: grepped all new files for physical
+      left-*/right-*/ml-*/mr-*/pl-*/pr-*/text-left/text-right — zero
+      matches. Icon+text pairs (copy button, empty-state icons) use
+      explicit `flex flex-row items-center gap-2`.
+- [x] Full suite: 32 files, 222/222 passing (215 prior + 7 new). `tsc
+      --noEmit` clean.
+- [x] Manual verification against the real running dev container (not
+      just unit tests), as `browser-test@test.local`:
+      - Empty-state pass (0 referrals, 0 commission history): both
+        `/en/referrals` (200) and `/ar/referrals` (200, `dir="rtl"`)
+        correctly show both empty states, referral code (own user id)
+        displayed correctly in both locales.
+      - Populated-data pass: created one non-buying referral and one
+        buying referral (purchased via the real `purchasePackage`
+        function inside the container, so `payDirectCommissionInTx`
+        actually ran) under `browser-test@test.local`. Both `/en` and
+        `/ar` correctly showed both referral cards with correct
+        status badges ("No purchase yet" / "لا يوجد شراء بعد" for the
+        non-buyer), and the commission history showed the real 500.00/
+        300.00 C/SAVING credits with "Wallet C"/"SAVING" badges staying
+        English in the Arabic render. Confirmed zero rendered empty
+        -state containers in the populated HTML (a `border-dashed` grep
+        returned 0) — an initial false alarm from matching the harmless
+        embedded next-intl translation-catalog JSON, not an actual double
+        -render bug.
+      - Found and fixed the known dev-container quirks along the way (not
+        new issues, matches standing lessons.md entries): a fresh route
+        directory needed `docker compose restart app` before it stopped
+        404ing (SCRUM-61's exact quirk), and the container's generated
+        `@prisma/client` was missing `commissionConfig` until `docker
+        compose exec app npx prisma generate` was re-run (Phase 3's exact
+        host/container node_modules drift quirk) — both already-known
+        classes of issue, not re-investigated from scratch.
+      - Cleaned up all manually-created verification data afterward: test
+        users/investments deleted, the sponsor's two real commission
+        ledger entries from the manual purchase deleted by idempotencyKey
+        (not userId-only, per the standing rule), sponsor's cached C/A/B/
+        SAVING balances recomputed from source, verified via the real
+        `runReconciliation()` function returning `clean: true` with zero
+        mismatches before considering the manual pass done. Session token
+        also deleted. Final full-suite re-run after cleanup: still
+        32/32 files, 222/222 tests passing.
+
+## SCRUM-66: wire payDirectCommission into the purchase flow — DONE
+
+- [x] `src/lib/direct-commission.ts`: extracted `payDirectCommissionInTx
+      (investmentId, forDate, tx)` — the real transactional body.
+      `payDirectCommission` is now a thin wrapper
+      (`prisma.$transaction((tx) => payDirectCommissionInTx(...))`), kept
+      for SCRUM-65's existing direct-call API/tests, not removed.
+- [x] `src/lib/investments.ts`: `purchasePackage` calls
+      `payDirectCommissionInTx(investment.id, data.forDate, tx)` right
+      after `tx.investment.create(...)`, inside the same transaction —
+      only on the newly-created path, not the already-processed replay
+      path. Any error inside it propagates through purchasePackage's
+      transaction callback and Prisma auto-rolls-back the whole thing; no
+      separate try/catch needed.
+- [x] Real test-ordering bug found while wiring this in (not a bug in the
+      new code): SCRUM-65's "blocks the commission when the buyer is
+      suspended" test suspended the buyer *after* calling `makePurchase`
+      — harmless before this ticket (nothing auto-triggered commission at
+      purchase time), but now that `purchasePackage` pays the commission
+      internally, that test's own purchase call paid it while the buyer
+      was still active, then suspended the buyer too late. Fixed by
+      moving `suspend(buyer.id)` before `makePurchase` and removing the
+      now-redundant explicit `payDirectCommission` call — the purchase
+      call itself is now the thing under test for that no-op path.
+- [x] Two new tests in `direct-commission.test.ts`, new describe block
+      `"purchasePackage + payDirectCommission wiring (SCRUM-66)"`:
+      - a single `purchasePackage` call (no separate `payDirectCommission`
+        call in the test) results in both the investment existing AND the
+        sponsor's C/SAVING correctly credited AND a matching saving_lot —
+        proving the wiring end-to-end through the real entry point, not
+        just through direct-commission's own internal API.
+      - forced mid-commission failure: temporarily closes out the active
+        `commission_config` row (`effectiveTo` backdated) so
+        `payDirectCommissionInTx`'s own config lookup throws partway
+        through `purchasePackage`'s transaction; restored in a `finally`
+        block regardless of pass/fail (verified directly in the DB
+        afterward — never left broken for other tests in this shared dev
+        DB). Asserts the whole transaction rolled back atomically: zero
+        investment rows, zero purchase ledger entries (the B debit/A
+        credit that would otherwise have posted), Wallet B still holds
+        its full pre-purchase balance, sponsor's C still zero, zero
+        saving_lots — not a half-completed state with the investment
+        created but commission silently missing.
+- [x] Confirmed Phase 3's existing `investments.test.ts` suite (10 tests)
+      passes completely unmodified — those test users are all
+      `registerAsRoot` (no sponsor), so `payDirectCommissionInTx`
+      correctly no-ops for every one of them, preserving pre-SCRUM-66
+      purchase behavior exactly.
+- [x] Full suite: 32 files, 215/215 passing (213 prior + 2 new), including
+      `reconciliation.test.ts` clean. `tsc --noEmit` clean. Verified zero
+      leftover `direct-commission-*` users, zero leftover saving_lots, and
+      `commission_config`'s single active row correctly restored
+      (`effective_to` null) after the forced-failure test.
+
+Plan:
+- [ ] `src/lib/direct-commission.ts`: extract `payDirectCommissionInTx
+      (investmentId, forDate, tx: Prisma.TransactionClient)` — the existing
+      `payDirectCommission` transactional body, now callable with a
+      caller-supplied `tx`. `payDirectCommission` itself becomes a thin
+      wrapper: `prisma.$transaction((tx) => payDirectCommissionInTx(...))`
+      — kept for SCRUM-65's existing direct-call tests/API, not removed.
+- [ ] `src/lib/investments.ts`: `purchasePackage` calls
+      `payDirectCommissionInTx(investment.id, data.forDate, tx)` right
+      after `tx.investment.create(...)`, inside the same transaction — NOT
+      as a separate follow-up call after the transaction commits. Only on
+      the newly-created path, not the already-processed replay path (a
+      replay's commission was already resolved on the original call).
+      Any error thrown inside payDirectCommissionInTx propagates up
+      through purchasePackage's transaction callback, which Prisma
+      auto-rolls-back — no separate try/catch needed, this is the same
+      atomicity mechanism postTransaction itself already relies on.
+- [ ] Tests first, extending `direct-commission.test.ts` (not
+      investments.test.ts — this is direct-commission's own integration
+      surface):
+      - a sponsored buyer's first purchase, verified via ONE
+        `purchasePackage` call: investment created AND sponsor's C/SAVING
+        credited AND saving_lot created, all confirmed after that single
+        call returns (no separate payDirectCommission call in the test).
+      - a forced failure partway through the commission step (achieved by
+        pre-inserting a ledger_entries row that collides with one of
+        payDirectCommissionInTx's own idempotency keys, so its internal
+        postTransaction call throws on the DB unique constraint) leaves
+        NO investment row, NO purchase ledger entries (B debit/A credit),
+        and NO commission ledger entries — proving the whole transaction
+        rolled back atomically rather than leaving the investment
+        half-committed with a missing commission.
+- [ ] Confirm Phase 3's existing purchase tests
+      (`investments.test.ts`) still pass unmodified — a purchase by a
+      root user (no sponsor) must behave identically to before this
+      change (this is exactly the "no sponsor -> no-op" path, already
+      proven safe by SCRUM-65, but must be re-verified end-to-end through
+      purchasePackage itself now that it's wired in).
+- [ ] Full suite + `tsc --noEmit` after; re-verify no leftover data.
+
+## SCRUM-68: Phase 6 exit test — RUN AND PASSED
+
+Ran a real scratch script (`.scratch_exit_test_phase6.ts`, deleted after —
+matches the Phase 3/5 exit-test convention) directly against the dev
+database, using real lib functions (`registerAsRoot`/`registerWithSponsor`,
+`adminCreditWalletB`, `purchasePackage`, `payDirectCommission`), not a re-run
+of the permanent unit suite. Migration state verified clean first (`prisma
+migrate status`). Built a 3-level sponsor chain (grandparent -> sponsor ->
+referral) specifically to prove the "one level only" clause for real, not
+just infer it from unit tests that never chained three real sponsor levels
+together in one scenario.
+
+### Results (18/18 assertions passed)
+
+**Scenario 1 — referral's first $10,000 purchase:**
+- Sponsor Wallet C == 500, SAVING == 300 (exact)
+- A matching saving_lot exists: amount 300, unlocksAt == purchase date + 3
+  months exactly (2026-08-01 -> 2026-11-01)
+
+**Scenario 2 — referral's second purchase ($777, any amount/funding source)
+generates no Direct Commission:**
+- Zero DIRECT_COMMISSION/DIRECT_SAVING ledger entries reference the second
+  investment
+- Sponsor's C/SAVING balances unchanged at 500/300
+- Still exactly 1 saving_lot for the sponsor (not 2)
+
+**Scenario 3 — the sponsor's own sponsor (grandparent) receives nothing,
+one level only:**
+- Grandparent Wallet C == 0, SAVING == 0
+- Grandparent has zero DIRECT_COMMISSION/DIRECT_SAVING ledger entries at all
+
+**Scenario 4 — replaying with the same idempotency key creates no
+duplicate:**
+- Direct `payDirectCommission` replay on the same investment: ledger entry
+  count unchanged (4 before, 4 after), still exactly 1 saving_lot, sponsor
+  balances still exactly 500/300
+- End-to-end replay via `purchasePackage` itself with the same
+  idempotencyKey: returns the same investment id (not a new one), referral
+  still has exactly 2 investments total (not 3)
+
+### Cleanup and regression check
+- Script's own cleanup used `cleanupLedgerEntriesForUsers` (idempotencyKey
+  -scoped, SYSTEM_EXTERNAL-safe) per the standing structural rule — not
+  hand-rolled `userId`-only deletion.
+- Verified zero leftover `phase6-exit-*` users in the DB after the script's
+  own cleanup ran, before even getting to the full-suite check.
+- Scratch script deleted; `git status` confirms no trace.
+- Full suite: 32 files, 222/222 passing, including `reconciliation.test.ts`
+  (3/3, the whole-database solvency check) explicitly re-run and confirmed
+  clean on its own as final proof, not just bundled into the full-run count.
+
+**PHASE 6 EXIT TEST: ALL 4 SCENARIOS / 18 ASSERTIONS PASSED. Full suite
+clean, including whole-database reconciliation.**
+
+Phase 6 is complete pending user confirmation in the operation-room chat per
+CLAUDE.md's build-order rule.
+
 # Phase 5 — Withdrawals
 
 ## SCRUM-55: Friday-only guard (server-side, Asia/Dubai) — DONE
