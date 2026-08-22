@@ -38,6 +38,8 @@ enum AdminActionType {
   PACKAGE_CREATED
   PACKAGE_EDITED
   PACKAGE_DEACTIVATED
+  USER_SUSPENDED
+  USER_REINSTATED
 }
 
 enum SecurityEventType {
@@ -102,6 +104,8 @@ model User {
   savingLots SavingLot[]
 
   binaryNode BinaryNode?
+
+  binaryCycles BinaryCycle[]
 
   @@map("users")
 }
@@ -502,6 +506,61 @@ model BvEntry {
   @@unique([ancestorUserId, sourceInvestmentId])
   @@index([cycleWeekStart])
   @@map("bv_entries")
+}
+
+// Weekly weak-leg payout snapshot, one row per user per cycle (Saturday
+// 00:00 -> Friday 23:59, Asia/Dubai) — the audit record and UI data source
+// for "why wasn't I paid" (docs/phases/phase-08-binary-cycle.md).
+// leftVolume/rightVolume already include that week's carried-in balance
+// (prior carryLeft/carryRight + BV rolled up this cycle), per
+// docs/mlm_rules_log.md Section 5. Schema only for now — the cycle-close
+// engine that populates these rows is a later ticket.
+model BinaryCycle {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+  user   User   @relation(fields: [userId], references: [id])
+
+  weekStart DateTime @map("week_start")
+  weekEnd   DateTime @map("week_end")
+
+  leftVolume  Decimal @map("left_volume") @db.Decimal(24, 8)
+  rightVolume Decimal @map("right_volume") @db.Decimal(24, 8)
+
+  matchedVolume  Decimal @default(0) @map("matched_volume") @db.Decimal(24, 8)
+  commissionPaid Decimal @default(0) @map("commission_paid") @db.Decimal(24, 8)
+
+  // Leftover after matching, carried into next week's left_volume/
+  // right_volume input. One of these is always 0 — the weaker leg resets,
+  // the stronger leg's excess carries (Carry Forward rule).
+  carryLeft  Decimal @default(0) @map("carry_left") @db.Decimal(24, 8)
+  carryRight Decimal @default(0) @map("carry_right") @db.Decimal(24, 8)
+
+  // week_start when the currently-carried balance first appeared unmatched;
+  // reset to this cycle's week_start whenever that side fully matches down
+  // to 0 (or is newly created carry). Null whenever the corresponding carry
+  // is 0. Used to compute Carry Forward Expiry age against
+  // commission_config.binaryCarryForwardExpiryMonths — only continuously
+  // unmatched volume ages out.
+  carryLeftSince  DateTime? @map("carry_left_since")
+  carryRightSince DateTime? @map("carry_right_since")
+
+  qualified Boolean @map("qualified")
+
+  // Explains why the user wasn't paid (e.g. "left leg inactive"); left null
+  // when qualified — nothing to explain on the payout path.
+  qualificationReason String? @map("qualification_reason")
+
+  // Distinct from the natural UNIQUE(user_id, week_start) below — a
+  // dedicated key column matching the WalletTransfer/WithdrawalRequest
+  // pattern elsewhere in this schema, per the phase brief's explicit
+  // `binary:{user_id}:{week_start}` format.
+  idempotencyKey String @unique @map("idempotency_key")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([userId, weekStart])
+  @@index([weekStart])
+  @@map("binary_cycles")
 }
 
 model AdminAction {

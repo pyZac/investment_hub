@@ -143,6 +143,28 @@
 
     "emptyStateTitle": "لم يتم تعيين موقعك بعد",
     "emptyStateDescription": "يتم تعيين موقعك في الشجرة الثنائية تلقائيًا بمجرد أن يقوم شخص ما برعايتك.",
-    "noDownlineYetNote": "ليس لديك شبكة فرعية بعد. ستظهر هنا الإحالات الجديدة التي يتم وضعها تحتك."
+    "noDownlineYetNote": "ليس لديك شبكة فرعية بعد. ستظهر هنا الإحالات الجديدة التي يتم وضعها تحتك.",
+
+    "cycleHeading": "دورة هذا الأسبوع",
+    "cycleDescription": "حجم الأعمال (BV) وحالة التأهل و Binary Commission الخاصة بك للدورة الأسبوعية الحالية.",
+
+    "noCycleHistoryTitle": "لا يوجد سجل دورات بعد",
+    "noCycleHistoryDescription": "لم تُغلق دورتك الثنائية الأسبوعية الأولى بعد. سيظهر حجم الأعمال وحالة التأهل هنا بعد إغلاق يوم السبت القادم.",
+
+    "statusQualified": "مؤهل",
+    "statusUnqualified": "غير مؤهل",
+
+    "reasonAccountSuspended": "حسابك موقوف حاليًا، لذا لم تكن هذه الدورة مؤهلة للدفع.",
+    "reasonNoActiveInvestment": "تحتاج إلى استثمار نشط للتأهل لـ Binary Commission.",
+    "reasonLeftLegInactive": "ساقك LEFT لا تحتوي على عضو نشط يحمل رأس مال، لذا لم تكن هذه الدورة مؤهلة للدفع.",
+    "reasonRightLegInactive": "ساقك RIGHT لا تحتوي على عضو نشط يحمل رأس مال، لذا لم تكن هذه الدورة مؤهلة للدفع.",
+
+    "cycleClosesToday": "تُغلق الدورة اليوم",
+    "cycleClosesInDays": "تُغلق الدورة خلال {days, plural, one {# يوم} other {# أيام}}",
+
+    "matchedVolumeLabel": "الحجم المطابق",
+    "commissionPaidLabel": "Binary Commission المدفوعة",
+    "carryForwardLeftLabel": "الترحيل - LEFT",
+    "carryForwardRightLabel": "الترحيل - RIGHT"
   }
 }

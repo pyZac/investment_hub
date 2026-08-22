@@ -11,6 +11,11 @@ export default function BinaryTreeLoading() {
 
         <div className="space-y-4">
           <Skeleton className="h-6 w-40" />
+          <Skeleton className="h-[220px] w-full rounded-xl" />
+        </div>
+
+        <div className="space-y-4">
+          <Skeleton className="h-6 w-40" />
           <Skeleton className="h-[520px] w-full rounded-xl" />
         </div>
       </div>

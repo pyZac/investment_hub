@@ -1,6 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "./prisma";
-import { registerAsRoot, registerWithSponsor, adminCreateUser, listReferralsForUser } from "./users";
+import {
+  registerAsRoot,
+  registerWithSponsor,
+  adminCreateUser,
+  listReferralsForUser,
+  suspendUser,
+  reinstateUser,
+  CannotSuspendMainAdminError,
+} from "./users";
 import { adminCreditWalletB } from "./admin-credit";
 import { purchasePackage } from "./investments";
 import { cleanupLedgerEntriesForUsers } from "./test-helpers";
@@ -322,5 +330,106 @@ describe("listReferralsForUser", () => {
 
     const referrals = await listReferralsForUser(sponsor.id);
     expect(referrals[0].suspendedAt).not.toBeNull();
+  });
+});
+
+describe("suspendUser / reinstateUser", () => {
+  const forDate = new Date("2026-08-22T10:00:00.000Z");
+
+  async function makeTarget(label: string) {
+    const user = await registerAsRoot({
+      email: `suspend-${label}-${crypto.randomUUID()}@test.local`,
+      password: "password123",
+      name: label,
+      securityQuestions: sampleQuestions,
+    });
+    createdUserIds.push(user.id);
+    return user;
+  }
+
+  it("main admin can suspend and then reinstate a user, logging both admin_actions", async () => {
+    const mainAdmin = await getMainAdmin();
+    const target = await makeTarget("main-admin-flow");
+
+    const suspended = await suspendUser(mainAdmin.id, target.id, { reason: "Fraud review." }, forDate);
+    expect(suspended.suspendedAt?.toISOString()).toBe(forDate.toISOString());
+
+    const suspendAction = await prisma.adminAction.findFirstOrThrow({
+      where: { targetUserId: target.id, actionType: "USER_SUSPENDED" },
+    });
+    expect(suspendAction.adminId).toBe(mainAdmin.id);
+    expect(suspendAction.reason).toBe("Fraud review.");
+
+    const reinstated = await reinstateUser(mainAdmin.id, target.id, { reason: "Review cleared." });
+    expect(reinstated.suspendedAt).toBeNull();
+
+    const reinstateAction = await prisma.adminAction.findFirstOrThrow({
+      where: { targetUserId: target.id, actionType: "USER_REINSTATED" },
+    });
+    expect(reinstateAction.reason).toBe("Review cleared.");
+  });
+
+  it("allows a sub-admin with USER_MANAGEMENT", async () => {
+    const subAdmin = await makeAdmin();
+    await prisma.adminPermissionGrant.create({
+      data: { adminUserId: subAdmin.id, permission: "USER_MANAGEMENT" },
+    });
+    const target = await makeTarget("granted-sub-admin");
+
+    const suspended = await suspendUser(subAdmin.id, target.id, { reason: "Test." }, forDate);
+    expect(suspended.suspendedAt).not.toBeNull();
+  });
+
+  it("rejects a sub-admin without USER_MANAGEMENT", async () => {
+    const subAdmin = await makeAdmin();
+    const target = await makeTarget("ungranted-sub-admin");
+
+    await expect(suspendUser(subAdmin.id, target.id, { reason: "Test." }, forDate)).rejects.toThrow(/forbidden/i);
+  });
+
+  it("rejects a non-admin acting user", async () => {
+    const nonAdmin = await makeTarget("non-admin-actor");
+    const target = await makeTarget("non-admin-target");
+
+    await expect(suspendUser(nonAdmin.id, target.id, { reason: "Test." }, forDate)).rejects.toThrow(/forbidden/i);
+  });
+
+  it("suspending an already-suspended user is a no-op, not an error", async () => {
+    const mainAdmin = await getMainAdmin();
+    const target = await makeTarget("double-suspend");
+
+    await suspendUser(mainAdmin.id, target.id, { reason: "First." }, forDate);
+    const actionCountAfterFirst = await prisma.adminAction.count({
+      where: { targetUserId: target.id, actionType: "USER_SUSPENDED" },
+    });
+
+    const secondResult = await suspendUser(mainAdmin.id, target.id, { reason: "Second." }, forDate);
+    expect(secondResult.suspendedAt?.toISOString()).toBe(forDate.toISOString());
+
+    const actionCountAfterSecond = await prisma.adminAction.count({
+      where: { targetUserId: target.id, actionType: "USER_SUSPENDED" },
+    });
+    expect(actionCountAfterSecond).toBe(actionCountAfterFirst); // no duplicate log entry
+  });
+
+  it("reinstating an already-active user is a no-op, not an error", async () => {
+    const mainAdmin = await getMainAdmin();
+    const target = await makeTarget("noop-reinstate");
+
+    const result = await reinstateUser(mainAdmin.id, target.id, { reason: "Never suspended." });
+    expect(result.suspendedAt).toBeNull();
+
+    const reinstateActionCount = await prisma.adminAction.count({
+      where: { targetUserId: target.id, actionType: "USER_REINSTATED" },
+    });
+    expect(reinstateActionCount).toBe(0); // no-op, no log entry for a state that never changed
+  });
+
+  it("cannot suspend the main admin", async () => {
+    const mainAdmin = await getMainAdmin();
+
+    await expect(suspendUser(mainAdmin.id, mainAdmin.id, { reason: "Test." }, forDate)).rejects.toThrow(
+      CannotSuspendMainAdminError,
+    );
   });
 });

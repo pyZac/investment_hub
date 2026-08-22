@@ -143,6 +143,28 @@
 
     "emptyStateTitle": "You have not been placed yet",
     "emptyStateDescription": "Your position in the binary tree is assigned automatically once someone sponsors you.",
-    "noDownlineYetNote": "You have no downline yet. New referrals placed under you will appear here."
+    "noDownlineYetNote": "You have no downline yet. New referrals placed under you will appear here.",
+
+    "cycleHeading": "This week's cycle",
+    "cycleDescription": "Your BV, qualification status, and Binary Commission for the current weekly cycle.",
+
+    "noCycleHistoryTitle": "No cycle history yet",
+    "noCycleHistoryDescription": "Your first weekly binary cycle has not closed yet. Volume and qualification status will appear here after the next Saturday close.",
+
+    "statusQualified": "Qualified",
+    "statusUnqualified": "Not qualified",
+
+    "reasonAccountSuspended": "Your account is currently suspended, so this cycle was not eligible for payout.",
+    "reasonNoActiveInvestment": "You need an active investment to qualify for Binary Commission.",
+    "reasonLeftLegInactive": "Your LEFT leg has no active member holding capital, so this cycle was not eligible for payout.",
+    "reasonRightLegInactive": "Your RIGHT leg has no active member holding capital, so this cycle was not eligible for payout.",
+
+    "cycleClosesToday": "Cycle closes today",
+    "cycleClosesInDays": "Cycle closes in {days, plural, one {# day} other {# days}}",
+
+    "matchedVolumeLabel": "Matched volume",
+    "commissionPaidLabel": "Binary Commission paid",
+    "carryForwardLeftLabel": "LEFT carry forward",
+    "carryForwardRightLabel": "RIGHT carry forward"
   }
 }

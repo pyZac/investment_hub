@@ -206,3 +206,122 @@ export async function listReferralsForUser(sponsorId: string) {
     hasPurchased: r._count.investments > 0,
   }));
 }
+
+export class CannotSuspendMainAdminError extends Error {
+  constructor() {
+    super("The main admin account cannot be suspended.");
+    this.name = "CannotSuspendMainAdminError";
+  }
+}
+
+async function assertHasUserManagementPermission(actingAdminId: string): Promise<void> {
+  const admin = await prisma.user.findUnique({ where: { id: actingAdminId } });
+  if (!admin || admin.role !== "ADMIN") {
+    throw new Error("Forbidden: acting user is not an admin.");
+  }
+  if (admin.isMainAdmin) {
+    return;
+  }
+  const grant = await prisma.adminPermissionGrant.findUnique({
+    where: { adminUserId_permission: { adminUserId: actingAdminId, permission: "USER_MANAGEMENT" } },
+  });
+  if (!grant) {
+    throw new Error("Forbidden: missing USER_MANAGEMENT permission.");
+  }
+}
+
+const suspendUserInputSchema = z.object({
+  reason: z.string().min(1, "A reason is required for suspending a user."),
+});
+
+/**
+ * Full financial freeze (build_plan.md: "suspension is a full financial
+ * freeze, not just an access block") — the flag this sets
+ * (`users.suspended_at`) is read directly by every money-moving engine
+ * (transfers, withdrawals, daily interest, direct/binary commission) and by
+ * `isLegActive` for every leg this user is part of, all the way up the
+ * placement tree. There is nothing further to "push" here: `isLegActive` is
+ * a live, uncached query (SCRUM-76), so the very next call anywhere already
+ * sees the new state — no separate re-evaluation step exists to trigger.
+ *
+ * No-op (not an error) if the target is already suspended — an admin
+ * re-clicking "suspend" on an already-frozen account is an ordinary
+ * outcome, matching this codebase's existing skip-not-throw convention for
+ * adjacent states (see payDirectCommission's suspended-party skips).
+ *
+ * Cannot suspend the main admin (invariant #8 — only the main admin manages
+ * other admin accounts; there would also be no path to reverse it).
+ *
+ * `forDate` is an explicit param, never `new Date()` internally (invariant
+ * #4).
+ */
+export async function suspendUser(
+  actingAdminId: string,
+  targetUserId: string,
+  input: { reason: string },
+  forDate: Date,
+) {
+  const data = suspendUserInputSchema.parse(input);
+  await assertHasUserManagementPermission(actingAdminId);
+
+  const target = await prisma.user.findUniqueOrThrow({ where: { id: targetUserId } });
+  if (target.isMainAdmin) {
+    throw new CannotSuspendMainAdminError();
+  }
+  if (target.suspendedAt !== null) {
+    return target;
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.user.update({
+      where: { id: targetUserId },
+      data: { suspendedAt: forDate },
+    });
+    await tx.adminAction.create({
+      data: {
+        adminId: actingAdminId,
+        actionType: "USER_SUSPENDED",
+        targetUserId,
+        reason: data.reason,
+      },
+    });
+    return updated;
+  });
+}
+
+const reinstateUserInputSchema = z.object({
+  reason: z.string().min(1, "A reason is required for reinstating a user."),
+});
+
+/**
+ * Reverses suspendUser. No-op (not an error) if the target is already
+ * active — mirrors suspendUser's own idempotent-adjacent-state convention.
+ * Same live-query reasoning applies: isLegActive re-reads suspendedAt on
+ * every call, so reinstatement is immediately visible everywhere with no
+ * separate re-evaluation step.
+ */
+export async function reinstateUser(actingAdminId: string, targetUserId: string, input: { reason: string }) {
+  const data = reinstateUserInputSchema.parse(input);
+  await assertHasUserManagementPermission(actingAdminId);
+
+  const target = await prisma.user.findUniqueOrThrow({ where: { id: targetUserId } });
+  if (target.suspendedAt === null) {
+    return target;
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.user.update({
+      where: { id: targetUserId },
+      data: { suspendedAt: null },
+    });
+    await tx.adminAction.create({
+      data: {
+        adminId: actingAdminId,
+        actionType: "USER_REINSTATED",
+        targetUserId,
+        reason: data.reason,
+      },
+    });
+    return updated;
+  });
+}

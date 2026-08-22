@@ -702,3 +702,124 @@ explicitly grep for `<referencedModel>.deleteMany` across `*.test.ts`
 BEFORE running the full suite, not after hitting the failure — this time
 it was caught and fixed in the same pass as writing the new test file,
 rather than needing a second full-suite run to discover it.
+
+## 2026-08-22 — Phase 8 (SCRUM-79)
+Mistake: none in the shipped code, but a real environment hazard surfaced
+and was initially under-verified. A background `vitest run` was still
+executing when a second `vitest run` was started (foreground, after the
+first appeared stalled) — both ran concurrently against the same shared
+dev DB (no isolated test DB, per the standing Phase 2 lesson). The second
+run alone came back clean, and this was initially reported to the user as
+"confirmed benign, likely two overlapping processes" based only on that
+retry passing — which the user correctly pushed back on, pointing out
+this project's history of intermittent issues that turned out to be real
+bugs (SCRUM-61). Deliberately reproducing it on demand (two `vitest run`
+processes started 5s apart, full untruncated logs captured this time)
+confirmed the real, nameable mechanism: (1) `commission_config`'s "at
+most one active row" singleton — new for this ticket's historical-rate
+test — got raced by both processes opening/closing the same row
+concurrently, causing a genuine `findFirstOrThrow` empty-result error in
+one process; (2) `phase-4-exit-test.test.ts`'s own documented hazard
+(SCRUM-54: it assumes exclusive control of every `status: ACTIVE`
+investment for its 90-day fabricated run) fired for real when both
+processes ran it concurrently, producing an actual ledger
+idempotency-key unique-constraint collision; (3) `reconciliation.test.ts`
+(a true whole-DB check) then correctly caught the resulting real drift in
+both runs. `vitest.config.ts`'s `fileParallelism: false` does NOT protect
+against this — it only serializes files within one `vitest run` process,
+not across two independent CLI invocations with no coordination between
+them. The crash-mid-run left 2 orphaned `exit-test-*` users behind
+(cleaned up via `cleanupLedgerEntriesForUsers` + the standard FK-safe
+deletion order, per the existing crash-cleanup lesson), and
+`reconciliation.test.ts` was re-run standalone afterward as proof of a
+clean recovery.
+Rule: **never run two `vitest run` invocations concurrently against this
+shared dev DB, full stop** — if a run appears stalled/slow, wait for it
+or check its process status, never start a second one "just to get an
+answer faster." When a test run shows an unexpected failure and a second,
+later run passes clean, "it passed on retry" is not evidence the first
+failure was benign noise — that is exactly the shape of a race condition,
+which a clean retry does nothing to explain away (this exact reasoning
+gap is already flagged in the SCRUM-61 lesson above; it recurred here
+because the failure looked environmental rather than code-shaped, which
+made it feel safer to wave off without proof). If a "probably just noise"
+explanation is offered, deliberately reproduce it before reporting it as
+confirmed — capture full untruncated error output (background-task
+output files can get truncated to a tail; redirect to a real log file
+with `>` when deliberately reproducing something you intend to inspect
+in full), and identify the actual mechanism by name, not just "it didn't
+happen the second time."
+
+## 2026-08-22 — Phase 8 (SCRUM-80)
+Mistake: a real off-by-one in test date literals (not the engine code,
+which was correct throughout). This project's established convention for
+stamping "Saturday 00:00 Asia/Dubai" for a given calendar Saturday date D
+is `(D-1)T20:00:00.000Z` — Dubai is a fixed UTC+4 offset, so Dubai
+midnight is 20:00 UTC the PRIOR calendar day. `binary-cycle-close.test.ts`
+already established this correctly (`WEEK_START = "2026-08-21T20:00:00
+.000Z"` for calendar Saturday 2026-08-22, with an explicit comment saying
+so). `binary-cycle-job.test.ts`'s first draft instead used the calendar
+Saturday's own date directly (e.g. `"2026-08-29T20:00:00.000Z"` for
+calendar Sat 08-29), which is actually Dubai SUNDAY 08-30 00:00 — a full
+week off from what the test intended, silently shifting every computed
+"unprocessed week" by one. This did not throw or look obviously wrong; it
+produced a different but internally-consistent set of weeks, so the
+symptom was a confusing assertion mismatch (`expected [...2 weeks] to
+equal [...3 weeks]`), not a crash pointing at the real cause. Root-caused
+by writing a tiny scratch script calling `saturdayWeekStart` directly and
+comparing its output against `Intl.DateTimeFormat`'s real Dubai-local
+weekday for the same instant, rather than guessing from the assertion
+diff alone.
+Rule: **any new test file dealing with Saturday-00:00-Dubai week
+boundaries must copy the `(calendar-Saturday-date − 1)T20:00:00.000Z`
+convention verbatim from an existing correct example
+(binary-cycle-close.test.ts's `WEEK_START`) — never re-derive it from
+"what date is Saturday" by hand.** When a weekly-cycle test's assertion
+fails with a plausible-looking-but-wrong value (not a crash, not an
+obviously nonsensical number), suspect this exact class of timezone
+-stamping error before assuming the engine logic is wrong — verify by
+calling the actual date-boundary helper (`saturdayWeekStart`, or
+whichever is relevant) directly against a real `Intl.DateTimeFormat`
+weekday check, not by staring at the ISO string and assuming it's
+self-evidently correct.
+
+## 2026-08-22 — Phase 8 (SCRUM-81)
+Mistake: ran a live-verification scratch script inside the app container
+(manually building a real tree/purchases/cycle to check the new binary
+-panel UI against the real dev DB) WHILE a background full-suite `vitest
+run` was still executing against the same shared dev DB — the exact class
+of hazard the SCRUM-79 lesson names, just via a scratch script instead of
+a second `vitest run`. Symptom: a user I created and closed exactly one
+cycle for via the script ended up with 4 `binary_cycles` rows spanning
+several weeks I never asked for, and the "qualified" scenario read back
+as unqualified. Root cause not fully traced (the concurrent test run had
+already finished and its own data was cleaned up by the time this was
+investigated, so the exact write path couldn't be replayed after the
+fact) — but isolating the two (waiting for the suite to finish, then
+re-running the identical script alone) reproduced exactly the expected
+single row per user with no anomalies, which is strong enough evidence of
+concurrent contamination to act on, even without a fully named mechanism.
+Also found and fixed a real script bug in the same pass, independent of
+the concurrency issue: the "qualified" demo scenario funded/purchased for
+the two CHILDREN but never gave the SPONSOR their own active investment
+— qualification requires an active investment for the sponsor
+themselves, not just both legs active, so the first attempt legitimately
+came back `no_active_investment` regardless of the concurrency problem.
+Rule: **the SCRUM-79 "never run two vitest processes concurrently" rule
+generalizes to "never run ANY script that writes to the shared dev DB
+while a background test suite is executing against it"** — a manual
+verification script is not exempt just because it isn't itself vitest.
+Before running any DB-writing scratch script, check `tasklist | grep
+node.exe` (or equivalent) for other active Node processes, not just
+other vitest invocations by name. When cleanup is needed after a
+concurrency-contaminated run, don't try to reverse-engineer exactly which
+foreign process wrote what — since the mechanism is often untraceable
+after the fact, just fully clean the contaminated scope and redo the
+verification in true isolation, then treat a clean isolated re-run as
+sufficient proof the contamination theory was right (matches the general
+principle already established: a race that only manifests under overlap
+and disappears under isolation doesn't need every step of its mechanism
+named to be believed, once it's been deliberately isolated and confirmed
+to disappear — the SCRUM-79 lesson's bar for "prove it, don't just retry"
+was met here by isolating and reproducing clean, since the original
+contaminating process could no longer be inspected after the fact).

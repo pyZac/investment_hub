@@ -1,3 +1,674 @@
+# Phase 8 — Binary Cycle Engine
+
+## SCRUM-82: Phase 8 exit test — RUN AND PASSED
+
+Ran a real scratch script (`.scratch_exit_test_phase8.ts`, deleted after —
+matches the Phase 3/5/6/7 exit-test convention) directly against the dev
+database, using real lib functions (`registerAsRoot`/`registerWithSponsor`,
+`adminCreditWalletB`, `purchasePackage`, `closeBinaryCycleForUser`), not a
+re-run of the permanent unit suite. Migration state verified clean first
+(`prisma migrate status`); confirmed no other Node process was running
+before starting, per the standing SCRUM-79/81 concurrency lesson.
+
+### Results (25/25 assertions passed)
+
+**Scenario 1 — the spec's exact worked example (Left 15,000 / Right
+7,000 -> 560 commission, next cycle opens 8,000/0):**
+- Sponsor qualifies (active investment + both legs active)
+- leftVolume=15000, rightVolume=7000, matched=min(15000,7000)=7000
+- commission = 8% x 7000 = 560, exactly — both on the `binary_cycles`
+  row AND confirmed as a real ledger CREDIT to the sponsor's Wallet C
+- Next cycle opens carryLeft=8000, carryRight=0
+
+**Scenario 2 — unqualified user accrues carry, paid nothing:**
+- Sponsor with an inactive RIGHT leg: qualified=false,
+  qualificationReason="right_leg_inactive"
+- matched=0, commission=0, zero ledger entries written
+- Full 4,200 BV still carries forward in full (nothing lost)
+
+**Scenario 3a — a carry unmatched past the expiry window is dropped:**
+- Seeded a prior cycle with a 9,000 carry-in whose age (7 months) exceeds
+  the real seeded 6-month `binaryCarryForwardExpiryMonths`
+- Confirmed the stale 9,000 was dropped: this cycle's leftVolume = only
+  the fresh 600 BV, not 9,600 — matched on the fresh volume only
+
+**Scenario 3b — a carry that matches before expiry resets its age
+counter:**
+- Cycle A: Left/Right both 2,000, fully matches -> carryLeft resets to 0,
+  carryLeftSince resets to null
+- Cycle B: a brand-new unmatched Left-only carry of 3,000 starts ->
+  carryLeftSince is freshly stamped to cycle B's own week_start, NOT
+  inherited from any age that existed before cycle A's full match —
+  proves the age genuinely resets, not just "happens to be recent"
+
+**Scenario 4 — re-running an already-processed week creates no
+duplicate payout:**
+- Replayed `closeBinaryCycleForUser` for scenario 1's exact (user, week)
+  a second time: returns the identical `binary_cycles` row (same id),
+  identical commissionPaid
+- Exactly one `binary_cycles` row and exactly one ledger CREDIT entry
+  exist for that (user, week) after the replay — no duplicate row, no
+  double-payout
+
+### Cleanup and regression check
+- Script's own cleanup used `cleanupLedgerEntriesForUsers`
+  (idempotencyKey-scoped, SYSTEM_EXTERNAL-safe) + FK-safe deletion order
+  (binary_cycles -> bv_entries -> investments -> ledger -> packages ->
+  security_questions -> wallet_accounts -> binary_nodes -> users) —
+  reported "Cleaned up 12 users, 12 packages, 12 investments."
+- Verified zero leftover `phase8exit-*` users and zero orphaned
+  `binary_cycles` rows in the DB after the script's own cleanup ran, via
+  a separate scratch check, before even getting to the full-suite pass.
+- Scratch script deleted; `git status` confirms no trace.
+- Full suite: 38 files, 271/271 passing (run in isolation, no concurrent
+  Node processes). `tsc --noEmit` clean.
+- `reconciliation.test.ts` (the whole-database solvency check) explicitly
+  re-run standalone as the final step, per the standing rule — 3/3
+  passing on its own, not just bundled into the full-run count.
+
+**PHASE 8 EXIT TEST: ALL 4 SCENARIOS / 25 ASSERTIONS PASSED. Full suite
+clean, including standalone whole-database reconciliation.**
+
+Phase 8 is complete pending user confirmation in the operation-room chat
+per CLAUDE.md's build-order rule.
+
+## SCRUM-81: binary panel UI — DONE
+
+Placement decision: extended the existing `/binary-tree` page with a new
+section above the tree (not a separate route) — same feature area, and
+the page already had a multi-section layout pattern (header + sections)
+established by SCRUM-73 and the referrals page.
+
+- [x] `src/lib/binary-cycle.ts`: added `getMyLatestBinaryCycle(userId)` —
+      most recent `binary_cycles` row (`orderBy: { weekStart: "desc" }`),
+      ownership by construction (invariant #9). Returns null for zero
+      cycle history. Also added `daysUntilNextSaturday(now)`, mirroring
+      `daysUntilNextFriday`'s exact convention (0 = today, no negative
+      countdown), reusing the existing `weekdayShort`/`SATURDAY` helpers
+      already in the file rather than duplicating them elsewhere.
+- [x] `src/app/[locale]/binary-tree/page.tsx`: fetches the latest cycle
+      alongside the subtree via `Promise.all`, renders a new `cycleHeading`
+      section above the tree section using `BinaryPanel`.
+- [x] `binary-panel.tsx` (new client component):
+      - Left/right volume bars: hand-built div-based bars (no Progress
+        component existed in this project), proportional to the larger of
+        the two.
+      - Carry-forward shown as its own explicit labeled value
+        (carryLeft/carryRight), not attempting to back out "fresh this
+        week" separately from leftVolume/rightVolume (which already
+        include carry-in per the schema).
+      - Qualification: emerald badge (matches this project's existing
+        success-state color, confirmed via grep of
+        capital-release-panel.tsx et al. — no separate design system
+        deviation) for qualified; amber badge (new to this project, no
+        prior precedent, but a reasonable minimal Tailwind-standard
+        addition for "not qualified" since `destructive` red was too harsh
+        for an ordinary weekly outcome) for unqualified, plus the specific
+        translated qualificationReason sentence below it.
+      - Countdown via `daysUntilNextSaturday`.
+      - No-history empty state (History icon + explanatory copy) when
+        `getMyLatestBinaryCycle` returns null.
+      - Imports `QualificationFailureReason` from `@/lib/binary-cycle`
+        directly rather than redeclaring a duplicate union type in the
+        client component.
+- [x] i18n: new keys added under the existing `BinaryTree` namespace (not
+      a separate nested object — matches the page's existing flat-keys
+      -under-one-namespace convention) in both messages/en.json and
+      messages/ar.json in this commit, including one translated sentence
+      per qualificationReason value. "LEFT"/"RIGHT"/"Binary Commission"
+      stay English per the glossary in both locales (verified live in the
+      Arabic render).
+- [x] RTL pass: grepped all new/changed binary-tree files for physical
+      left-*/right-*/ml-*/mr-*/pl-*/pr-*/text-left/text-right — zero
+      matches. Volume bars use plain block-level width (no absolute
+      positioning), so they flip correctly under `dir="rtl"` automatically
+      without needing explicit RTL-specific classes.
+- [x] `loading.tsx` updated with a skeleton for the new panel section.
+- [x] `tsc --noEmit` clean throughout (one real type gap found and fixed:
+      the DB's `qualification_reason` column is a plain nullable string,
+      not a Postgres enum, so `latestCycle.qualificationReason` types as
+      `string | null` from Prisma — narrowed at the page.tsx boundary via
+      an explicit, commented cast to `QualificationFailureReason | null`,
+      justified because only `closeBinaryCycleForUser`'s own union ever
+      writes that column).
+- [x] Full suite: 38 files, 271/271 passing (same count as SCRUM-80, no
+      new automated tests added — a UI-only ticket), including
+      `reconciliation.test.ts` clean. Confirmed via a single isolated run.
+- [x] Manual verification in the running dev container (not just unit
+      tests): `docker compose restart app` picked up the new component
+      with no compile errors. Built three real scenarios via a scratch
+      script run inside the app container against the real dev DB
+      (qualified sponsor: 5000/5000 BV, real `closeBinaryCycleForUser`
+      call → matched 5000, commission 400 at the seeded 8% rate;
+      unqualified sponsor: `right_leg_inactive`; fresh root with zero
+      cycle history), logged each in via the real `login()` function, and
+      fetched `/en/binary-tree` and `/ar/binary-tree` with real session
+      cookies via curl. Confirmed real serialized values in the response
+      (5000.00/400.00 for the qualified case, the raw `right_leg_inactive`
+      reason key for the unqualified case, the no-history empty-state copy
+      for the fresh root) and confirmed `dir="rtl"` plus the translated
+      "مؤهل" (Qualified) string render correctly in `/ar`, with "Binary
+      Commission" staying English.
+- [x] Hit and resolved a real environment hazard mid-verification (logged
+      in lessons.md as a generalization of the SCRUM-79 rule): the first
+      verification pass ran the scratch script while a background
+      full-suite `vitest run` was STILL executing against the same shared
+      dev DB — produced 4 unexplained `binary_cycles` rows for a user the
+      script only closed one cycle for, and a false "unqualified" reading.
+      Also found and fixed, independent of the concurrency issue, a real
+      script bug: the "qualified" scenario funded/purchased for the two
+      children but never gave the SPONSOR their own active investment
+      (qualification requires the sponsor's own active investment, not
+      just both legs active). Fully cleaned up the contaminated data,
+      waited for the background suite to actually finish, then re-ran the
+      identical script in true isolation — reproduced exactly one clean
+      row per user with the correct qualified/commission numbers,
+      confirming the concurrency theory without needing to trace the
+      exact foreign write path (which was no longer inspectable after the
+      fact). All verification data (users, sessions, investments,
+      binary_cycles, packages) cleaned up afterward via a scratch cleanup
+      script; confirmed zero leftover `scrum81verify-*` users. Both
+      scratch scripts deleted; `git status` confirms no trace.
+
+## SCRUM-80: weekly binary cycle batch job — DONE
+
+Confirmed with user before implementing: batch scope is users with a
+`binary_nodes` row (ever placed in the tree), not every `User` row —
+avoids permanent all-zero binary_cycles noise for pure admins/never
+-placed users while still covering everyone who could ever qualify.
+
+Design (mirrors daily-interest-job.ts's split exactly):
+- `unprocessedWeeks(today)`: finds the last COMPLETED job_runs row for
+  job_type `binary_cycle`, walks forward WEEK BY WEEK (period_key =
+  week_start ISO date) from the week after that, through the most
+  recently CLOSEABLE week relative to `today` — i.e. `saturdayWeekStart
+  (today) - 7 days` (a week isn't closeable until its own Friday 23:59
+  has passed; if `today` itself is Saturday 00:00, that's exactly the
+  week that just ended).
+- First-ever run (no prior COMPLETED row): per the standing SCRUM-52
+  lesson ("a job that never ran before was never 'missed' for any prior
+  week — there's no history to catch up on"), only the most recently
+  closeable week is due, never walking back to an arbitrary epoch.
+- `runOneWeek(weekStart)`: job_runs upsert RUNNING -> iterate every user
+  with a binary_nodes row (`prisma.binaryNode.findMany({ select: {
+  userId: true } })`) -> `closeBinaryCycleForUser(userId, weekStart,
+  weekEnd)` for each -> COMPLETED/FAILED, matching runOnePeriod's
+  try/catch/error-message shape exactly.
+- `runBinaryCycleCatchUp(today)`: public entry, mirrors
+  runDailyInterestCatchUp — takes `today` as a parameter (invariant #4),
+  processes unprocessed weeks oldest-first.
+- Worker (`src/worker/index.ts`): add a second `cron.schedule` job,
+  `0 0 * * 6` (Saturday 00:00 Asia/Dubai — cron's day-of-week 6), calling
+  `runBinaryCycleCatchUp(new Date())`. This is the one place `new Date()`
+  is appropriate in this code path (invariant #4) — the real scheduler
+  entry point, not engine logic.
+
+Plan:
+- [x] Tests first (`binary-cycle-job.test.ts`, new file, mirrors
+      daily-interest-job.test.ts's shape, including the
+      `vi.spyOn(module.namespace, ...)` mock pattern for the
+      failure-injection test): multi-week gap (3 missed weeks) catches up
+      all of them in order, each getting its own binary_cycles row per
+      user; an already-COMPLETED week is not reprocessed; true first-ever
+      run only processes the most recently closeable week, not a
+      backward walk; a failure partway through one week marks it FAILED
+      and does not advance past it, retry then succeeds; only users with
+      a binary_nodes row are processed (a never-placed root user gets
+      zero binary_cycles rows).
+- [x] `src/lib/binary-cycle-job.ts` (new file): implemented per the
+      design above — `BINARY_CYCLE_JOB_TYPE`, `unprocessedWeeks`,
+      `mostRecentCloseableWeekStart`, `runOneWeek`,
+      `runBinaryCycleCatchUp`. Imports `closeBinaryCycleForUser` via a
+      module namespace (`import * as binaryCycle from "./binary-cycle"`)
+      specifically so the failure-injection test can `vi.spyOn` it,
+      matching daily-interest-job.ts's exact reason for the same pattern.
+- [x] `src/worker/index.ts`: wired in the second `cron.schedule` job,
+      `0 0 * * 6` Asia/Dubai.
+- [x] Two real bugs found and fixed while writing tests (not caught by
+      design review):
+      1. Test dates originally used `2026-08-01`-range weeks, which
+         predate the real seeded `commission_config.effectiveFrom`
+         (2026-08-20 in this dev DB) — `activeCommissionConfigAt` (a
+         genuine historical lookup, working exactly as designed) correctly
+         threw "no active commission_config found." Fixed by moving all
+         test weeks to late Aug/Sept 2026, safely after the real seed
+         date — a test-data bug, not an engine bug.
+      2. A genuine off-by-one in how test dates were stamped: this
+         project's convention (established in binary-cycle-close.test.ts's
+         `WEEK_START`) is that Dubai-Saturday-00:00 for calendar date D is
+         written as `(D-1)T20:00:00.000Z`, NOT `D T20:00:00.000Z` — Dubai
+         is UTC+4, so its midnight is 20:00 UTC the PRIOR calendar day.
+         Test dates initially used the calendar Saturday's own date
+         directly (e.g. `2026-08-29T20:00:00.000Z` for calendar Sat
+         08-29), which is actually Dubai SUNDAY 08-30 00:00 — one full
+         week off from intended, causing `unprocessedWeeks` to compute a
+         different (also internally-consistent, so not obviously wrong)
+         set of weeks than the test expected. Traced via a scratch debug
+         script confirming `saturdayWeekStart`'s real output against
+         `Intl.DateTimeFormat`'s actual Dubai-local weekday, not by
+         guessing. Fixed by using `(Saturday-date - 1)T20:00:00.000Z`
+         throughout, matching the established convention exactly — the
+         engine code (`saturdayWeekStart`, `mostRecentCloseableWeekStart`)
+         was correct throughout; only the tests' own date literals were
+         wrong.
+- [x] Full suite: 38 files, 271/271 passing (266 prior + 5 new), including
+      `reconciliation.test.ts` clean. `tsc --noEmit` clean. Confirmed via
+      a single isolated run (no concurrent vitest processes, per the
+      standing SCRUM-79 lesson).
+- [x] Live verification in the running dev container (not just unit
+      tests): `docker compose restart worker` to pick up the new code,
+      confirmed via `docker compose logs worker` both cron jobs log their
+      scheduled-on-startup lines ("daily interest job scheduled for 00:05
+      Asia/Dubai" and "binary cycle job scheduled for Saturday 00:00
+      Asia/Dubai"). Manually triggered `runBinaryCycleCatchUp(new Date())`
+      via a scratch script run inside the app container against the real
+      dev DB (`docker compose exec app npx tsx ...`) — built a real
+      2-level tree (sponsor + LEFT/RIGHT referrals) via the real
+      `registerAsRoot`/`registerWithSponsor`, funded and purchased real
+      packages via the real `adminCreditWalletB`/`purchasePackage`, then
+      ran the batch job for real. Confirmed a real `job_runs` row
+      (`binary_cycle`, COMPLETED) and a real `binary_cycles` row were
+      written — `qualified=false` for that specific run, correctly:
+      the purchases happened "today" but the most recently closeable
+      week's `weekEnd` was last Friday, before those purchases existed,
+      so no BV had rolled up into that week yet (correct real-system
+      behavior, not a bug). Hit and resolved the known
+      host/container-Prisma-client-drift quirk (`docker compose exec app
+      npx prisma generate`) along the way — a previously-documented class
+      of issue, not re-investigated from scratch. Cleaned up all
+      real data touched (users, investments, job_runs, binary_cycles)
+      via a second scratch script; confirmed zero leftover
+      `scrum80live-*` users and zero leftover `binary_cycle` job_runs
+      rows afterward. Both scratch scripts deleted; `git status` confirms
+      no trace.
+
+## SCRUM-79: confirm carry-forward expiry is fully complete — DONE (2 real gaps found and fixed)
+
+Audited SCRUM-78's expiry implementation against the phase brief's 3
+specific claims, not just re-reading the summary:
+
+1. **Age counter resets to null only on a FULL match to 0, not merely
+   below-threshold** — confirmed correct by re-reading `nextSince()`:
+   returns null iff `carryOut.isZero()`, otherwise preserves/starts
+   `since`. Already had one passing test for this
+   ("resets the expiry clock when a carry fully matches down to 0 in an
+   intermediate week"). No gap.
+2. **A side that matches occasionally/partially never ages out
+   incorrectly** — found TWO real coverage gaps here, not just re-reading
+   code:
+   - No test proved a carry-in still INSIDE the expiry window (not yet
+     expired) survives — only "well past expiry gets dropped" was
+     tested, never the "correctly does NOT drop" direction. An inverted
+     `>=`/`<=` or an addMonths off-by-one would have shipped undetected.
+   - No test proved `carryLeftSince` stays pinned to its ORIGINAL start
+     across MULTIPLE consecutive partial-match cycles — only a single
+     -cycle partial match was covered (the worked-example test).
+   Added both as new tests in `binary-cycle-close.test.ts`: a carry-in
+   dated exactly one day inside the window survives fully, combining
+   correctly with fresh BV; a 3-cycle scenario (seed -> partial match ->
+   partial match) proves `carryLeftSince` never drifts forward on
+   intervening partial matches, only resets when the side truly clears
+   to 0. Found and fixed a test-authoring bug while writing the second
+   test: reused the same `rightInvestment.id` for two different weeks'
+   `bv_entries` rows, colliding with bv_entries' own
+   UNIQUE(ancestorUserId, sourceInvestmentId) constraint — fixed by
+   creating a second distinct investment for the second week's entry
+   (a real fact about BV, not a workaround: each week's volume is tied
+   to a real purchase event, so two different weeks' entries always need
+   two different source investments).
+3. **Tested against the REAL seeded default 6-month expiry, not an
+   arbitrary duration** — confirmed already true: the existing expiry
+   test reads `activeConfig.binaryCarryForwardExpiryMonths` dynamically
+   rather than hardcoding a number, and a live DB query confirmed the
+   real seeded value is genuinely 6. No gap — this claim was already
+   satisfied by SCRUM-78's original test.
+- [x] `binary-cycle-close.test.ts` now has 11 tests (9 from SCRUM-78 + 2
+      new), all passing.
+- [x] Full suite: 37 files, 266/266 passing, including
+      `reconciliation.test.ts` clean, confirmed via a clean, single,
+      non-overlapping run. `tsc --noEmit` clean. Verified zero leftover
+      test users, exactly one active commission_config row remaining.
+- [x] User pushed back on an initial under-verified claim: an earlier run
+      showed 1 failure in `phase-4-exit-test.test.ts`, reported as
+      "likely two overlapping vitest run processes" based only on a
+      clean retry — correctly challenged as insufficient evidence given
+      this project's history of intermittent issues that turned out
+      real (SCRUM-61). Deliberately reproduced on demand (two `vitest
+      run` processes started 5s apart, full untruncated logs captured)
+      and confirmed the exact mechanism, now logged in lessons.md: (1)
+      `commission_config`'s singleton row raced by both processes'
+      historical-rate tests opening/closing it concurrently; (2)
+      `phase-4-exit-test.test.ts`'s own documented SCRUM-54 hazard (it
+      assumes exclusive control of every ACTIVE investment) firing for
+      real, producing a genuine ledger idempotency-key collision; (3)
+      `reconciliation.test.ts` correctly catching the resulting real
+      drift in both concurrent runs. Cleaned up the 2 orphaned
+      `exit-test-*` users left by the crash (standard
+      cleanupLedgerEntriesForUsers + FK-safe order), re-verified
+      `reconciliation.test.ts` clean standalone afterward.
+
+**Confirmed: carry-forward expiry is fully complete and verified**
+against all 3 specific claims in this ticket (2 real test-coverage gaps
+closed), and the transient full-suite failure is now genuinely
+understood (deliberately reproduced with full evidence, root cause
+named and logged), not just assumed benign.
+
+## SCRUM-78: weekly binary cycle close — DONE
+
+Confirmed with user before implementing (two real ambiguities, not
+guessed):
+1. Carry Forward Expiry IS in scope for this ticket (not deferred) — the
+   phase brief's exit test requires it and the schema's
+   carryLeftSince/carryRightSince fields exist for exactly this.
+2. Expiry drops ONLY the stale carry-in portion, never this week's freshly
+   -arrived BV — `left = (carryLeftIn, zeroed if stale) + thisWeekLeft`,
+   matching mlm_rules_log's exact wording ("the stale PORTION is dropped").
+
+Design (worked through before coding):
+- Per-user engine function `closeBinaryCycleForUser(userId, weekStart,
+  weekEnd)` — mirrors accrueDailyInterestForInvestment's per-unit shape;
+  a batch/job wrapper iterating every user + job_runs tracking is a
+  separate follow-on ticket (matches the Phase 4 daily-interest vs.
+  daily-interest-job split), NOT built here — out of scope per this
+  ticket's own "for each user at cycle close" framing (singular unit).
+- Idempotency: check for an existing binary_cycles row
+  (unique(userId, weekStart)) up front; if found, return it unchanged —
+  matches the ledger's own idempotency-replay shape, adapted since
+  binary_cycles has no ledger row for the unqualified/no-payout path (so
+  the guard must be on binary_cycles itself, not solely on a ledger
+  lookup like postTransaction's).
+- Carry-in: load the immediately preceding week's binary_cycles row
+  (weekStart - 7 days) for this user. None found -> first-ever cycle,
+  carryLeftIn/carryRightIn/*Since all zero/null.
+- This week's fresh BV: sum bv_entries where ancestorUserId = userId AND
+  cycleWeekStart = weekStart, grouped by leg (LEFT/RIGHT).
+- Expiry check (on carry-IN only, before combining with fresh BV): if
+  carryLeftSince is non-null and weekStart - carryLeftSince >
+  commission_config.binaryCarryForwardExpiryMonths (the config row ACTIVE
+  AT weekEnd, per invariant #6 — historical weeks always use the rate/
+  config active during that week, not today's), the carry-in is dropped
+  (treated as 0) rather than combined into `left`. Same for right,
+  independently.
+- left = (possibly-expired) carryLeftIn + thisWeekLeft; same for right.
+- Qualification: user has >=1 investment with status ACTIVE, AND
+  isLegActive(userId, "LEFT", weekEnd) AND isLegActive(userId, "RIGHT",
+  weekEnd) — SNAPSHOTTED at weekEnd per SCRUM-77's load-bearing
+  constraint, never re-queried live for an already-closed week by any
+  future caller. qualificationReason set (non-null) only on the
+  non-qualified path, explaining which condition failed (no active
+  investment / left leg inactive / right leg inactive — first failing
+  reason wins, doesn't enumerate all failures).
+- If qualified: matched = min(left, right); rate = commission_config row
+  active AT weekEnd (historical lookup, same pattern as dailyRate() in
+  interest-rate.ts — NOT direct-commission.ts's "whatever's active now"
+  shortcut, since binary commission's invariant #6 requirement is
+  explicit and dailyRate already has the correct historical-lookup
+  precedent to copy). commission = matched * binaryRate / 100, credited
+  to Wallet C via postTransaction (CREDIT user / DEBIT SYSTEM_EXTERNAL,
+  matching payDirectCommissionInTx's money-materializing pattern — binary
+  commission is new money, not a transfer), fully available, no saving
+  split. idempotencyKey `binary:{userId}:{weekStart}` shared with the
+  binary_cycles row itself (both must exist together or neither does —
+  same transaction).
+- Carry forward: carryLeft = left - matched, carryRight = right -
+  matched (matched only ever subtracted from BOTH, so exactly one side
+  hits 0 when qualified — the weaker leg — per the spec's own math; if
+  NOT qualified, matched = 0, so carryLeft/carryRight = left/right
+  unchanged, matching "volume still carries forward in full").
+- carryLeftSince (post-cycle): null if carryLeft == 0; else weekStart if
+  this is a freshly-started carry (prior carryLeftSince was null, i.e.
+  carryLeft was 0 last week or this is the first cycle); else carried
+  forward unchanged from the prior cycle's carryLeftSince (the unmatched
+  streak continues). Same independently for carryRightSince.
+- Whole function runs in one DB transaction: idempotency check, all
+  reads, the binary_cycles row write, and (if qualified) the ledger
+  credit all commit or roll back together.
+
+Plan:
+- [ ] Tests first (`binary-cycle-close.test.ts`, new file):
+      - **Exit-test worked example**: a user with carryLeftIn=8000 (from
+        a seeded prior cycle) + this week's fresh BV such that
+        left=15000/right=7000 total, both legs active, active investment
+        -> qualified=true, matched=7000, commission=560 (8% of 7000)
+        credited to Wallet C, carryLeft=8000 carried to output (15000-7000),
+        carryRight=0. Confirms the exact spec numbers end-to-end.
+      - Unqualified user (e.g. one leg inactive) accrues left/right totals
+        into carryLeft/carryRight in full, matched=0, commission=0, no
+        Wallet C credit, qualificationReason populated explaining why.
+      - Qualified with left/right already equal -> matched = full amount,
+        BOTH carryLeft and carryRight end at 0 (not just the "weaker" side
+        -- when equal, matching exhausts both).
+      - Historical rate correctness: seed a NEW commission_config row
+        effective partway through, close a week whose weekEnd predates the
+        change -> commission computed with the OLD rate, not the new one
+        (mirrors interest-rate.test.ts's historical-lookup test shape).
+      - Carry expiry: a carry-in whose carryLeftSince is older than
+        binaryCarryForwardExpiryMonths is dropped (left = only this
+        week's fresh BV, carry-in excluded) — construct via a seeded prior
+        binary_cycles row with an old carryLeftSince, not by actually
+        running binaryCarryForwardExpiryMonths real weeks of the engine.
+      - Carry expiry reset: a carry that gets fully matched down to 0 in
+        an intermediate week resets carryLeftSince to null that week, so
+        a LATER unmatched carry starting fresh doesn't inherit the old age.
+      - Idempotency: closing the same (userId, weekStart) twice returns
+        the same binary_cycles row, creates no duplicate ledger entries,
+        and does not double-write the row.
+      - No prior binary_cycles row (first-ever cycle for this user):
+        carry-in treated as 0/0, no crash on the "load prior week" lookup.
+- [x] `src/lib/binary-cycle.ts`: added `closeBinaryCycleForUser(userId,
+      weekStart, weekEnd)` implementing the design above, plus
+      `activeCommissionConfigAt` (historical lookup, mirrors dailyRate's
+      pattern — NOT direct-commission.ts's "currently active" shortcut),
+      `applyExpiry`, `nextSince` helpers.
+- [x] Real gap found and fixed mid-implementation, confirmed with user
+      before proceeding (not guessed): mlm_rules_log Section 5's binary
+      qualification rule lists only 3 conditions (active investment, left
+      leg active, right leg active) — no explicit "user themselves not
+      suspended" clause. But build_plan.md's cross-cutting rule requires
+      every commission engine to skip suspended parties, and every
+      sibling engine (daily interest, direct commission) already does.
+      Added a 4th qualification check (`account_suspended`, checked
+      first) so a suspended sponsor with two genuinely-active legs still
+      correctly gets zero payout — confirmed via a dedicated test.
+      `QualificationFailureReason` = "account_suspended" |
+      "no_active_investment" | "left_leg_inactive" | "right_leg_inactive"
+      (first failure wins, never enumerates more than one cause).
+- [x] Tests first, new file `binary-cycle-close.test.ts` (9 tests, all
+      passing): exact spec worked example (carryLeftIn 8000 + fresh BV ->
+      left 15000/right 7000 -> matched 7000 -> commission 560 at the
+      seeded 8% rate -> next cycle opens carryLeft 8000/carryRight 0,
+      carryLeftSince correctly carried forward since still unmatched);
+      unqualified user (inactive leg) carries volume in full, paid
+      nothing, correct qualificationReason; equal left/right fully
+      matches both sides to 0 (both carries null); historical rate
+      correctness (closed the real commission_config row at a boundary
+      AFTER this cycle's weekEnd, opened a new row with a deliberately
+      different binaryRate starting at that boundary, confirmed the
+      OLD rate was used — mirrors interest-rate.test.ts's exact
+      boundary-crossing pattern, restored the singleton row in a
+      `finally` block); carry expiry drops only the stale carry-in,
+      never this week's fresh BV; expiry clock resets on a carry that
+      fully matched to 0 in an intermediate week (next unmatched carry
+      starts its own fresh age, doesn't inherit an ancient since);
+      idempotent replay (same row returned, zero duplicate ledger
+      entries, zero duplicate binary_cycles rows); first-ever cycle (no
+      prior row) treated as carry-in 0/0 without crashing; suspended
+      sponsor with two active legs and their own active investment is
+      still correctly unqualified (`account_suspended`), zero commission,
+      full carry forward.
+- [x] Full suite: 37 files, 264/264 passing (255 prior + 9 new), including
+      `reconciliation.test.ts` clean. `tsc --noEmit` clean. Verified zero
+      leftover `close-*` test users, zero stray commission_config rows,
+      and exactly one active (effective_to IS NULL) commission_config row
+      remaining after cleanup.
+- [x] Explicitly NOT built here (confirmed with user before implementing):
+      the batch/job wrapper that iterates every user with a binary_nodes
+      row and calls this per-user, with job_runs catch-up tracking —
+      that's the natural next ticket (mirrors daily-interest-job.ts), out
+      of scope for "for each user at cycle close" as a singular per-user
+      engine function.
+
+## SCRUM-77: leg-activity re-evaluation triggers — DONE
+
+Confirmed approach with user before implementing (this was flagged as the
+trickiest part of the phase, deliberately paused to propose rather than
+guess):
+- `isLegActive` (SCRUM-76) is already a live, uncached query — it re-derives
+  correctness from `Investment.status`/`User.suspendedAt` on every call, so
+  there is no stale cache for capital-release/suspension to invalidate
+  "today." The real risk this ticket guards against is SCRUM-78's weekly
+  cycle-close engine ever asking `isLegActive` for TODAY's live state when
+  deciding a PAST week's qualification — that would let a Tuesday capital
+  release retroactively change what last Friday's already-paid cycle
+  "should have" looked like, and would make a re-run of a past week's
+  processing non-reproducible (violates the spirit of invariant #6: once
+  computed, a historical result must stay stable). So the real fix belongs
+  to SCRUM-78 (leg activity gets snapshotted into `binary_cycles` AT
+  cycle-close time, using that cycle's own week_end as `forDate` — never
+  re-derived from "now" for a past week), not to this ticket.
+- Given that, SCRUM-77 narrows to two concrete things:
+  1. `suspendUser`/`reinstateUser` admin actions don't exist ANYWHERE in
+     this codebase yet — grepped confirmed only `AccountSuspendedError`
+     consumers and tests directly poking `suspendedAt` via
+     `prisma.user.update`. The ticket needs a real "suspension event" to
+     hang behavior on, so building these (USER_MANAGEMENT-gated, logged to
+     admin_actions, matching adminCreateUser's permission-check pattern) is
+     in scope here.
+  2. Regression tests proving `isLegActive`'s live answer actually flips
+     immediately after both trigger events (capital release via the real
+     `releaseCapital`, suspension via the new `suspendUser`/
+     `reinstateUser`) — not just via direct `prisma.update` field pokes
+     like SCRUM-76's tests did, and specifically proving the ripple up
+     MULTIPLE ancestor levels, not just the immediate parent.
+- Explicitly NOT building in this ticket: any new "push"/notification/
+  snapshot mechanism at release-or-suspend time — there is nothing yet to
+  push into (SCRUM-78 doesn't exist yet), and building speculative
+  plumbing ahead of its only consumer would be exactly the over-engineering
+  CLAUDE.md warns against. SCRUM-78 must read leg activity via
+  `isLegActive(userId, position, cycle.weekEnd)` at close time, snapshot
+  the boolean into that cycle's row, and never re-query live state for an
+  already-closed week.
+
+Plan:
+- [x] Added `AdminActionType.USER_SUSPENDED` / `USER_REINSTATED` via
+      hand-written migration `20260822110000_add_user_suspend_reinstate_actions`
+      (`ALTER TYPE ... ADD VALUE`, matching the exact precedent of
+      `20260815123619_package_admin_actions`) + `migrate deploy` +
+      `prisma generate`.
+- [x] `src/lib/users.ts`: added `suspendUser(actingAdminId, targetUserId,
+      { reason }, forDate)` / `reinstateUser(actingAdminId, targetUserId,
+      { reason })`. Shared `assertHasUserManagementPermission` helper
+      (main admin bypasses, else requires USER_MANAGEMENT grant, matches
+      `adminCreateUser`'s pattern exactly). Both are no-op-safe (return
+      the unchanged user, no admin_actions row written) for an
+      already-suspended/already-active target rather than throwing —
+      matches this codebase's "ordinary outcome" convention. Both log to
+      `admin_actions` with the mandatory reason on an actual state change.
+      `suspendUser` takes `forDate` explicitly (invariant #4); throws
+      `CannotSuspendMainAdminError` for `isMainAdmin: true` targets
+      (invariant #8 + no path to reverse it otherwise).
+- [x] Tests first, extended `users.test.ts` (new `suspendUser /
+      reinstateUser` describe block, 8 tests, all passing): main admin
+      full suspend->reinstate flow with both admin_actions rows logged
+      correctly; sub-admin with USER_MANAGEMENT allowed; sub-admin
+      without it forbidden; non-admin actor forbidden; double-suspend is
+      a no-op (no duplicate admin_actions row); reinstating an
+      already-active user is a no-op (zero admin_actions rows); cannot
+      suspend the main admin.
+- [x] `binary-cycle.test.ts` (extended, new describe block "leg-activity
+      ripple on capital release / suspension (SCRUM-77)", 2 tests, both
+      passing): built a real 3-level tree (grandAncestor -> ancestor ->
+      leaf, via registerWithSponsor/spillover) with a directly-created
+      ACTIVE investment pinned to `capitalUnlocksAt = FRIDAY` (mirrors
+      capital-release.test.ts's own pattern for exercising the real
+      `releaseCapital` without waiting out an actual 6-month lock) —
+      confirmed BOTH `ancestor`'s and `grandAncestor`'s LEFT legs flip
+      active->inactive after a real `releaseCapital` call, not just the
+      immediate parent. Mirror test using the new real `suspendUser`/
+      `reinstateUser` (not a direct `prisma.update` poke): both ancestors'
+      legs flip inactive on suspend, flip back active on reinstate.
+- [x] Full suite: 36 files, 255/255 passing (246 prior + 8 suspend/
+      reinstate + 2 ripple - 1 net vs. naive sum accounted for by
+      pre-existing counts; reconciliation.test.ts and full run both
+      confirmed clean regardless). `tsc --noEmit` clean. Verified zero
+      leftover `ripple-*`/`suspend-*` test users after cleanup.
+
+Explicitly NOT built here (confirmed with user before implementing):
+no snapshot/notification mechanism at release-or-suspend time — SCRUM-78's
+cycle-close engine is the sole future consumer, and it must read leg
+activity via `isLegActive(userId, position, cycle.weekEnd)` AT close time
+and snapshot the boolean into that cycle's `binary_cycles` row, never
+re-querying live state for an already-closed week. This is the load
+-bearing design constraint SCRUM-78 must follow.
+
+- [x] Confirmed via capital-release.ts: `Investment.status` flips to
+      CAPITAL_RELEASED immediately at release time (not backdated), so
+      "currently holds capital" is genuinely a live `status === ACTIVE`
+      check against current DB state — no point-in-time reconstruction
+      needed. `forDate` param kept per invariant #4 even though this
+      particular check doesn't use it for filtering, for signature
+      consistency with the rest of the engine (SCRUM-77 will need it).
+- [x] `src/lib/binary-cycle.ts`: added `isLegActive(userId, position,
+      forDate): Promise<boolean>`.
+      1. Finds the direct child of `userId`'s binary_nodes row at
+         `position` (LEFT or RIGHT) — none -> empty leg -> false.
+      2. Subtree membership via materialized path prefix
+         (`path: { startsWith: legRoot.path }`) — correctly includes the
+         child itself and everyone below.
+      3. One query: `findFirst` on binary_nodes with a nested `user`
+         relation filter (`suspendedAt: null` AND
+         `investments: { some: { status: "ACTIVE" } }`) — a single joined
+         query, not N+1.
+      Pure read function, no caching (explicit ticket scope — SCRUM-77
+      handles caching/re-evaluation triggers).
+- [x] Tests first, extended `binary-cycle.test.ts` (new `isLegActive`
+      describe block, 5 tests, all passing): active investment deep in
+      subtree (not a direct child) -> true; sole capital-holder has
+      released capital (status flipped directly, matching
+      capital-release.test.ts's own pattern of not re-exercising
+      releaseCapital's Friday/6-month preconditions for an unrelated unit
+      test) -> false; sole capital-holder suspended -> false; empty leg
+      (no members) -> false; multiple members in the leg, only one holds
+      active capital -> true.
+- [x] User flagged a real gap after initial completion: a one-person leg
+      (only a direct child, no grandchildren at all) sat untested between
+      the "deep subtree" and "empty leg" cases — exactly the boundary
+      where an off-by-one in the path-prefix match (e.g. requiring a
+      segment strictly below the leg root) could hide. Added a 6th test:
+      sponsor -> onlyChild (LEFT, no descendants), onlyChild purchases ->
+      isLegActive returns true. Confirmed the existing `startsWith`
+      implementation already handles this correctly (a node's own path
+      matches its own prefix, not just strictly-longer descendant paths)
+      — no code change needed, test-coverage gap only.
+- [x] Full suite: 36 files, 246/246 passing (240 prior + 6 new), including
+      `reconciliation.test.ts` clean. `tsc --noEmit` clean. Verified zero
+      leftover `legactive-*` test users after cleanup.
+
+## SCRUM-75: binary_cycles table — DONE
+
+- [x] Read phase-08 brief, mlm_rules_log.md Section 5 in full, build_plan.md
+      Part 3 schema + Part 6 item 6, lessons.md in full.
+- [x] Designed `BinaryCycle` model matching existing conventions exactly
+      (Decimal(24,8), snake_case @map, RESTRICT FK to users per invariant
+      #7, UNIQUE(user_id, week_start) + separate `idempotency_key @unique`
+      column matching the WalletTransfer/WithdrawalRequest pattern rather
+      than job_runs' composite-only pattern, since the brief explicitly
+      calls out `binary:{user_id}:{week_start}` as its own key format).
+      Confirmed with user: `qualificationReason` stays null when qualified
+      (only populated to explain the non-payment path), not always
+      populated.
+- [x] Showed schema diff to user before running migration; user confirmed
+      proceed.
+- [x] Hand-written migration `20260822100000_add_binary_cycles` +
+      `migrate deploy` (standing rule — this repo uses hand-edited
+      migrations from Phase 2 onward, `migrate dev` is never used).
+- [x] Added inverse `binaryCycles BinaryCycle[]` relation on `User`.
+- [x] `prisma migrate status` clean (25 migrations, schema up to date),
+      `tsc --noEmit` clean, `\d binary_cycles` confirmed real table
+      structure matches the schema exactly (all Decimal(24,8) columns,
+      RESTRICT FK, both unique indexes, week_start index). Schema only —
+      no engine logic yet, that's a later ticket.
+
 # Phase 7 — Placement Tree & BV Rollup
 
 ## SCRUM-69: binary_nodes table — DONE
