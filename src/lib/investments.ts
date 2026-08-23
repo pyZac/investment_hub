@@ -4,6 +4,7 @@ import { prisma } from "./prisma";
 import { postTransaction } from "./ledger-transaction";
 import { payDirectCommissionInTx } from "./direct-commission";
 import { rollupBvForPurchase } from "./binary-tree";
+import { accrueMrvForPurchase } from "./rank";
 
 const purchasePackageInputSchema = z.object({
   packageId: z.string(),
@@ -48,6 +49,12 @@ function addMonths(date: Date, months: number) {
  * already-processed replay path — a replay's commission (if any) was
  * already resolved on the original call and payDirectCommissionInTx's own
  * per-split idempotency keys would make a second call harmless but wasted.
+ *
+ * BV rollup (rollupBvForPurchase) and MRV accrual (accrueMrvForPurchase) run
+ * the same way, same reasoning: same transaction, newly-created path only.
+ * BV walks the placement tree (unlimited depth); MRV credits only the
+ * buyer's direct sponsor (depth 1, sponsor tree) — two intentionally
+ * different trees and depths, never conflate them (invariant #5).
  */
 export async function purchasePackage(userId: string, input: PurchasePackageInput) {
   const data = purchasePackageInputSchema.parse(input);
@@ -121,6 +128,7 @@ export async function purchasePackage(userId: string, input: PurchasePackageInpu
 
     await payDirectCommissionInTx(investment.id, data.forDate, tx);
     await rollupBvForPurchase(investment.id, userId, pkg.amount, data.forDate, tx);
+    await accrueMrvForPurchase(userId, pkg.amount, data.forDate, tx);
 
     return { alreadyProcessed: false as const, investment };
   });

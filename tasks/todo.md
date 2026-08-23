@@ -1,3 +1,745 @@
+# Phase 9 — MRV & Ranking Engine
+
+## Open question — RESOLVED before any building started
+Asked Zac directly: OG rank's 100,000,000 MRV/month (direct referrals only,
+~1,000 Elite-package purchases in 30 days) — intentional (top ranks
+aspirational) or needs revisiting? **Answer: intentional, build exactly as
+documented.** No threshold changes, no added team depth to MRV. This matches
+build_plan.md Part 5 item 2's own framing of the same open question.
+
+## Research findings (from Explore agent, informs design below)
+- `RANK_CONFIG` already exists in the `AdminPermission` enum
+  (schema.prisma:27) — unused by any code yet.
+- `LedgerEntryType.RANK_REWARD` already exists in the enum
+  (schema.prisma:133) — use directly, don't add a new one.
+- `mrv_periods`, `rank_awards`, `rank_config` do NOT exist in schema yet —
+  confirmed via grep.
+- Versioned-config pattern to copy exactly: `CommissionConfig` shape
+  (id, ...fields, effectiveFrom, effectiveTo nullable, no `@@unique` in
+  Prisma DSL) + hand-written migration index
+  `CREATE UNIQUE INDEX ..._one_active ON ((TRUE)) WHERE effective_to IS NULL`
+  — NEVER index the nullable column itself (that was the SCRUM-48 bug).
+  Lookup pattern at call sites: `findFirstOrThrow({ where: { effectiveTo: null } })`.
+- Direct Commission idempotency key shape to mirror:
+  `{prefix}:{id}:{suffix}` — Phase 9 uses `rank_reward:{user_id}:{rank}`
+  per the phase brief, consistent with this shape.
+- **No existing "grant now, pay later" mechanism anywhere in the codebase**
+  — binary commission computes and credits in the same job run. Phase 9
+  introduces this pattern fresh: `rank_awards.credited_at` nullable =
+  granted-but-not-yet-paid; a separate weekly Friday sweep job credits it.
+- `job_runs` catch-up pattern (binary-cycle-job.ts, copied near-verbatim for
+  the monthly MRV job): `unprocessedPeriods(today)` — if no prior COMPLETED
+  row exists, start = end (only the most recently closeable period), NEVER
+  walk back to a hardcoded epoch (SCRUM-52 lesson). periodKey for a monthly
+  job = `"YYYY-MM"` (Asia/Dubai calendar month).
+- Permission gating: `requirePermission("RANK_CONFIG", forDate)` from
+  `route-guard.ts`, same pattern as any other gated admin action.
+- Test convention: co-located `src/lib/<name>.test.ts`. Every test that
+  writes ledger entries must clean up via `cleanupLedgerEntriesForUsers`
+  (test-helpers.ts) — idempotencyKey-scoped, SYSTEM_EXTERNAL-safe.
+- New tables with RESTRICT FKs to `users` require grepping
+  `<model>.deleteMany` across `*.test.ts` before finalizing schema (SCRUM-70/71
+  lesson) — applies to `mrv_periods` and `rank_awards` (both FK -> users).
+- Never run two DB-writing processes concurrently against the shared dev DB
+  (SCRUM-79/81).
+
+## Design decisions to confirm with Zac before coding
+
+1. **Schema**: three new tables —
+   - `rank_config`: id, rank_name, mrv_required Decimal(24,8),
+     direct_referrals_required Int, reward_amount Decimal(24,8),
+     reward_type (CASH | CASH_OR_TRIP), rank_order Int, effective_from,
+     effective_to (nullable) — versioned exactly like `commission_config`,
+     with the same `((TRUE))`-expression partial unique index scoped
+     **per rank_name** (i.e. at most one active row per rank_name, NOT a
+     single global active row — unlike commission_config, multiple ranks
+     must be simultaneously active). Index:
+     `CREATE UNIQUE INDEX rank_config_one_active_per_rank ON rank_config (rank_name) WHERE effective_to IS NULL`
+     — this one legitimately CAN index the real column since `rank_name`
+     is never null (not the NULL-column trap from the SCRUM-48 lesson,
+     since uniqueness here is meant to be "one active row per distinct
+     rank_name value," not "at most one row total").
+   - `mrv_periods`: user_id (FK -> users, RESTRICT), month (text
+     "YYYY-MM"), volume Decimal(24,8), qualified_direct_referrals Int,
+     UNIQUE(user_id, month).
+   - `rank_awards`: user_id (FK -> users, RESTRICT), rank (text, matches
+     rank_config.rank_name), achieved_month, reward_amount Decimal(24,8),
+     reward_choice (CASH | TRIP, nullable — only meaningful for Partner),
+     credited_at (nullable timestamp), idempotency_key (unique text,
+     `rank_reward:{user_id}:{rank}`), UNIQUE(user_id, rank).
+2. **Two jobs, not one**:
+   - Monthly MRV evaluation job (`job_type: "mrv_evaluation"`,
+     periodKey `"YYYY-MM"`): for every month boundary crossed, computes
+     each qualifying user's MRV + qualified-direct-referral-count for that
+     completed month, evaluates against active rank_config rows, grants
+     the single highest newly-achieved rank (rank_awards row,
+     credited_at: null) per user.
+   - Weekly Friday payout sweep (new job, reuses the Saturday-week-start
+     cadence already established, or triggers Friday-specific — TBD at
+     implementation time to match `daysUntilNextFriday`'s existing
+     Friday concept): sweeps `rank_awards` where `credited_at IS NULL`
+     AND `reward_choice != 'TRIP'` (or reward_type from rank_config is
+     CASH), credits Wallet C via `postTransaction`, sets `credited_at`.
+   - Reasoning: MRV evaluation is inherently monthly (calendar-month
+     volume); reward payout is inherently weekly (Friday cycle) — these
+     are different cadences and mixing them into one job_runs periodKey
+     scheme would be incorrect.
+3. **MRV accrual mechanism**: is this computed on-the-fly by the monthly
+   job (summing `investments.purchasedAt` within the month, joined to
+   `users.sponsorId`), or accrued incrementally into `mrv_periods` at
+   purchase time (mirroring how `bv_entries` accrues at purchase time)?
+   Leaning toward **incremental accrual at purchase time** (mirrors the
+   bv_entries pattern already established in Phase 7, avoids a heavy
+   full-month scan, and naturally supports "every purchase counts" without
+   re-deriving it later) — `purchasePackage` increments the direct
+   sponsor's current-month `mrv_periods` row (upsert) by the purchase
+   amount, every purchase, no first-purchase-only gate. The monthly job
+   then only evaluates already-accrued `mrv_periods` rows against
+   rank_config, it doesn't compute volume itself.
+4. **Qualified direct referral count**: computed at evaluation time (not
+   accrued incrementally) — count of `users` where `sponsorId = user.id`
+   AND has an investment with `status: ACTIVE` at month-end. This is a
+   point-in-time count, not cumulative, so accruing it incrementally
+   would need re-evaluation anyway; direct query at evaluation time is
+   simpler and avoids a cache to keep in sync with capital-release/
+   suspension events (same reasoning as `isLegActive` in Phase 8, no
+   caching, pure live read at the decision point).
+
+## Plan
+
+- [x] Present schema design (rank_config, mrv_periods, rank_awards) to Zac,
+      confirm before writing migration. Approved as proposed; scoped down to
+      building rank_config alone first (SCRUM-83), mrv_periods and
+      rank_awards deferred to their own upcoming tickets for incremental
+      review.
+- [ ] Confirm the two-job split (monthly MRV eval vs. weekly Friday payout
+      sweep) and the incremental-accrual-at-purchase-time approach.
+
+## SCRUM-83: rank_config table — DONE
+
+- [x] Added `RankConfig` model + `RankRewardType` enum (CASH |
+      CASH_OR_TRIP) to schema.prisma, matching `CommissionConfig`'s
+      versioned shape (id, ...fields, effectiveFrom, effectiveTo nullable,
+      no `@@unique` in Prisma DSL — hand-written index instead). Key
+      difference from CommissionConfig/InterestRateConfig: uniqueness is
+      "at most one active row PER rank_name," not a single global active
+      row, since all 8 ranks must be simultaneously active. Index is on
+      the real (never-null) `rank_name` column itself, scoped by
+      `WHERE effective_to IS NULL` — this is NOT the NULL-column trap from
+      the SCRUM-48 lesson (that bug was indexing a column that's NULL on
+      every qualifying row; rank_name is always a real string, so two
+      active rows for the same rank genuinely collide on this index).
+- [x] Hand-written migration `20260822130000_add_rank_config` (mirrors
+      `20260821120000_add_commission_config`'s exact structure — table,
+      partial unique index, seed INSERT all in the same migration file,
+      same as commission_config's own precedent) + `migrate deploy` +
+      `prisma generate` (standing rule — no `migrate dev` since Phase 2).
+- [x] Seeded all 8 ranks from mlm_rules_log.md Section 6 exactly: Investor
+      (25,000 / 2 / $500 CASH), Partner (100,000 / 4 / $2,000
+      CASH_OR_TRIP), Executive (500,000 / 6 / $10,000 CASH), Director
+      (2,000,000 / 8 / $40,000 CASH), President (7,500,000 / 10 /
+      $150,000 CASH), Chairman (20,000,000 / 12 / $400,000 CASH),
+      Visionary (50,000,000 / 15 / $1,000,000 CASH), OG (100,000,000 / 20
+      / $2,000,000 CASH) — confirmed by direct `psql` query against the
+      real table, all 8 rows match the doc exactly.
+- [x] Verified the partial unique index actually enforces what's intended
+      (per the standing "don't trust the index exists, prove it" rule
+      from the SCRUM-48 lesson), not just assumed from `\d rank_config`:
+      (1) inserting a second active ("Investor", effective_to NULL) row
+      correctly fails with a real constraint violation; (2) inserting a
+      second NON-active ("Investor", effective_to set) row correctly
+      succeeds (versioning must still allow closed historical rows); (3)
+      inserting a second active row for a DIFFERENT rank_name ("OG2")
+      correctly succeeds alongside all 8 real ranks staying active
+      simultaneously — proving this is genuinely a per-rank constraint,
+      not accidentally a global one. All test rows deleted immediately
+      after each check; confirmed exactly 8 rows remain in rank_config.
+- [x] `prisma migrate status` clean (27 migrations). `tsc --noEmit` clean.
+      `\d rank_config` confirmed real table structure matches schema
+      exactly (all Decimal(24,8) columns, RankRewardType enum column,
+      both indexes present).
+- [x] Full suite: 38 files, 271/271 passing (same count as before this
+      change — schema-only migration, no new lib/test files yet).
+      `reconciliation.test.ts` re-run standalone as final proof, 3/3
+      passing clean.
+
+Schema only — no engine logic (MRV accrual, evaluation, rank CRUD) yet;
+that's `mrv_periods`/`rank_awards` and their own upcoming tickets, per
+Zac's explicit request to review each incrementally rather than build all
+three tables at once.
+
+## SCRUM-84: mrv_periods table + MRV accrual logic — DONE
+
+- [x] Added `MrvPeriod` model to schema.prisma (userId FK -> users RESTRICT,
+      month "YYYY-MM" text, volume Decimal(24,8) default 0,
+      qualifiedDirectReferrals Int default 0 — written by the monthly
+      evaluation job, a later ticket, not this one — UNIQUE(userId, month)).
+      Uses the SPONSOR tree only, never the placement tree (invariant #5).
+- [x] Hand-written migration `20260822140000_add_mrv_periods` (mirrors
+      `20260822100000_add_binary_cycles`'s exact structure) + `migrate
+      deploy` + `prisma generate`.
+- [x] `src/lib/rank.ts`: `dubaiMonthKey(forDate)` (mirrors
+      `saturdayWeekStart`'s Intl.DateTimeFormat/Asia-Dubai pattern from
+      binary-cycle.ts — a UTC-day date can already be the 1st of the next
+      month in Dubai, so this can't be a raw `toISOString()` slice) +
+      `accrueMrvForPurchase(buyerId, amount, forDate, tx)`: reads the
+      buyer's `sponsorId` directly off `users` (depth 1, no ancestor walk —
+      genuinely different from BV's unlimited placement-tree rollup), no-ops
+      for a buyer with no sponsor, upserts the sponsor's current-month
+      mrv_periods row incrementing `volume`. Every purchase counts, no
+      first-purchase-only gate (deliberately different from Direct
+      Commission's isDirectCommissionTriggerPurchase — doc comment on both
+      functions cross-references the other so this isn't accidentally
+      "unified" later). `tx` required, not optional, same reasoning as
+      rollupBvForPurchase/payDirectCommissionInTx.
+- [x] Wired into `purchasePackage` (`src/lib/investments.ts`) right after
+      `rollupBvForPurchase`, same transaction, newly-created path only.
+- [x] Tests first, new file `rank.test.ts` (6 tests, all passing):
+      `dubaiMonthKey` unit tests including the Dubai-midnight boundary case
+      (2026-08-31T20:00:00.000Z UTC = Dubai Sept 1 00:00, must key to
+      "2026-09" not "2026-08"); a referral's first purchase AND a later
+      reinvestment both add to the sponsor's MRV (no first-purchase gate);
+      a referral's OWN downline's purchase does NOT count toward the
+      original (grand)sponsor's MRV — only the direct referral's own
+      purchases do (built a real 3-level sponsor chain, confirmed the
+      2-levels-up grandsponsor's mrv_periods row is null while the direct
+      1-level-up sponsor's is correctly populated); MRV resets to 0 in a
+      new calendar month (no carry forward — a September purchase and an
+      October purchase produce two separate rows, October's volume is NOT
+      September's + October's); a purchase by a non-referred root user
+      creates zero mrv_periods rows for anyone, including the buyer
+      themselves (MRV never self-credits).
+- [x] Real gap found and fixed while writing tests (not caught by design
+      review): 2 test-authoring bugs, not engine bugs — (1) `Prisma.Decimal
+      .toString()` on a whole number returns "1000", not "1000.00000000",
+      so string-equality assertions against a padded literal failed; fixed
+      by switching to `.equals(...)` per this project's own established
+      Decimal-assertion convention (already used in binary-tree.test.ts,
+      confirmed via grep before choosing the fix). (2) The month-reset
+      test's second (October) purchase reused the same $3000 package
+      instead of a cheaper one, but only funded Wallet B with $1500 for
+      it — a real insufficient-funds failure, unrelated to MRV logic. Fixed
+      by using two distinct packages priced to match each purchase's actual
+      funding.
+- [x] Real RESTRICT-FK-to-users gap found via the standing SCRUM-70/71
+      lesson's own prescribed check (grep every `*.test.ts` for
+      `user.deleteMany` before finalizing the schema) — confirmed live by
+      actually running the full suite, not just trusting the grep: adding
+      `mrv_periods` (FK -> users, RESTRICT) broke 4 pre-existing test
+      files' `afterAll` cleanup order, all of which create sponsored users
+      who purchase packages (triggering MRV accrual as a side effect) —
+      `direct-commission.test.ts`, `users.test.ts`, `binary-cycle.test.ts`
+      (2 separate `afterAll` blocks in this file), `bv-rollup.test.ts`.
+      Fixed by adding `prisma.mrvPeriod.deleteMany(...)` before
+      `user.deleteMany` in all 5 affected blocks across the 4 files —
+      identified precisely (not by guessing) via `grep -l
+      registerWithSponsor` intersected with `grep -l purchasePackage`
+      across every test file, which produced exactly the 4 files that
+      actually failed, confirming the method before trusting it further.
+- [x] The first full-suite run (before the FK-cleanup fix) left 17 orphaned
+      test users behind with dangling mrv_periods rows across the 4 broken
+      files. Cleaned up via a scratch script (`.scratch_cleanup_mrv_fk_
+      orphans.ts`, deleted after) that derived the exact orphan set from
+      `mrv_periods.user_id` (not an email-pattern guess), including a
+      leaf-first repeated-delete loop for binary_nodes (self-FK RESTRICT,
+      matching the SCRUM-70 precedent for this exact situation) — confirmed
+      zero leftover rows in both `mrv_periods` and `users` (by
+      `mrv-`/known test-prefix pattern) afterward.
+- [x] One transient test timeout observed in the second full-suite run
+      (`direct-commission.test.ts`'s forced-mid-commission-failure test,
+      20000ms timeout) — re-ran that file alone (21s total, that specific
+      test at 1979ms, comfortably under the timeout) and the full suite a
+      third time end-to-end, both clean. Per the standing SCRUM-61/79
+      lesson ("a clean retry alone doesn't prove a failure was benign"),
+      this was treated as requiring a genuine isolated-file re-run as
+      evidence, not just a retry of the same full-suite shape — the
+      isolated run's normal timing (not just a pass) is what confirms this
+      was ordinary system-load contention on a 20s default timeout during a
+      41-file×277-test parallel run, not a real regression introduced by
+      this change (the change under test never touches
+      commission_config or the commission payout path this test exercises).
+- [x] `prisma migrate status` clean (28 migrations). `tsc --noEmit` clean
+      throughout. Full suite: 39 files, 277/277 passing (271 prior + 6
+      new), confirmed via TWO independent clean full runs after the FK fix
+      (not just one), plus `reconciliation.test.ts` re-run standalone as
+      final proof, 3/3 passing.
+
+Schema + accrual only — the monthly rank-evaluation job that reads
+mrv_periods against rank_config and grants ranks is `rank_awards`' own
+upcoming ticket, per Zac's explicit request to review each piece
+incrementally.
+
+## SCRUM-85: rank_awards table + rank evaluation/grant logic — DONE
+
+- [x] Added `RankAward` model (userId FK -> users RESTRICT, rank text,
+      achievedMonth text, rewardAmount/rewardType SNAPSHOTTED from the
+      rank_config row active at grant time — never a live FK read, so a
+      later admin edit to rank_config can't retroactively change an
+      already-granted award's value, per invariant #6 — rewardChoice
+      nullable for Partner's later cash-or-trip choice, creditedAt nullable
+      for the later Friday-payout-sweep ticket, idempotencyKey unique text
+      `rank_reward:{user_id}:{rank}`, UNIQUE(userId, rank) enforcing
+      once-ever at the DB level). Migration `20260822150000_add_rank_awards`
+      + `migrate deploy` + `prisma generate`.
+- [x] **Real design gap found while writing tests, confirmed with Zac before
+      fixing** (not silently patched): the phase brief's own "repeating the
+      same qualifying performance in a later month grants nothing" test
+      case exposed that "highest newly-qualified, skip already-awarded
+      ranks" alone was insufficient — a LOWER rank crossed the same month
+      as a granted higher rank (e.g. Investor crossed alongside Partner,
+      but never itself recorded anywhere since only Partner got a
+      rank_awards row) would incorrectly become claimable again in a LATER
+      month where the same performance merely repeats, effectively paying
+      the lower rank late and contradicting "only the highest is paid."
+      Asked Zac directly: should a forfeited lower rank remain claimable in
+      a future month, or be permanently forfeited the moment a higher rank
+      wins? **Answer: permanently forfeited.** Confirmed the fix
+      (a dedicated `RankForfeit` table, not conflating forfeits into
+      rank_awards) as the cleaner of two options before building it.
+- [x] Added `RankForfeit` model (userId FK -> users RESTRICT, rank,
+      forfeitMonth, UNIQUE(userId, rank) — same once-ever permanence
+      reasoning as RankAward, but deliberately a SEPARATE table so
+      rank_awards stays a clean audit trail of real, rewarded grants only).
+      Migration `20260822160000_add_rank_forfeits` + `migrate deploy` +
+      `prisma generate`.
+- [x] `src/lib/rank.ts`: `qualifiedDirectReferralCount(userId)` — live,
+      uncached count of sponsor-tree direct referrals (`sponsorId: userId`,
+      depth 1) holding an ACTIVE investment and not suspended, explicitly
+      mirroring `isLegActive`'s "pure live read, no caching" reasoning
+      (never drifts out of sync with capital-release/suspension events).
+      `evaluateRankForUser(userId, month, forDate)`: requires the user's
+      own active investment; loads that month's mrv_periods volume
+      (0 if none); queries active rank_config rows ordered rankOrder desc;
+      excludes ranks already in rank_awards OR rank_forfeits for this user
+      (either one is a permanent "already decided" signal); finds every
+      newly-qualified rank (MRV + referral thresholds both met); grants
+      only the first (highest) as a real RankAward, records every other
+      newly-qualified rank in that same call as a RankForfeit. Per-user
+      engine function (mirrors closeBinaryCycleForUser's shape) — the
+      batch/job wrapper iterating every user with job_runs catch-up
+      tracking is `rank-job.ts`'s own later ticket, not built here. Grants
+      only, never touches the ledger — the reward is snapshotted with
+      `creditedAt: null`; the weekly Friday payout sweep that actually
+      credits Wallet C is a separate later ticket, per mlm_rules_log's
+      "granted immediately, reward credited on the next Friday cycle."
+- [x] Tests first, extended `rank.test.ts` (6 new tests, all passing): the
+      exit-test scenario itself (4 qualified referrals + 100,000 MRV in one
+      month -> Partner granted immediately, reward snapshotted at $2,000/
+      CASH_OR_TRIP, creditedAt null, correct idempotencyKey); crossing
+      multiple thresholds in one month grants only the highest (Partner),
+      with Investor recorded as a real RankForfeit (not just absent) for
+      that same month; repeating the same qualifying performance in a
+      later month grants nothing — Partner already awarded, Investor
+      already forfeited, both permanently excluded; meeting only MRV (not
+      referral count) grants nothing; meeting only referral count (not
+      MRV) grants nothing; the user's own active investment is required
+      even with both other thresholds met.
+- [x] `prisma migrate status` clean (30 migrations). `tsc --noEmit` clean
+      throughout. Full suite: 39 files, 283/283 passing (277 prior + 6
+      new), confirmed via a clean full run, plus `reconciliation.test.ts`
+      re-run standalone as final proof, 3/3 passing. No new RESTRICT-FK
+      cleanup-order gaps this time (grep-confirmed: rank_awards/
+      rank_forfeits are currently only ever written by
+      `evaluateRankForUser`, which only `rank.test.ts` calls, so no
+      pre-existing test file's `afterAll` could be broken by this change
+      — unlike SCRUM-84's mrv_periods, which purchasePackage writes to
+      unconditionally).
+
+Grant/evaluation logic only — the monthly batch job (job_runs catch-up,
+iterating every user), the weekly Friday payout sweep (actually crediting
+Wallet C), admin rank CRUD, and the Partner cash-vs-trip choice action are
+each their own upcoming tickets, per Zac's explicit request to review each
+piece incrementally.
+
+## SCRUM-86: reward payout mechanism — DONE
+
+No schema change needed — `RankAward.creditedAt`/`rewardChoice` were
+already designed in SCRUM-85 specifically for this ticket's "queued vs.
+settled" state, so this ticket is pure `src/lib/rank.ts` logic, no
+migration.
+
+- [x] `payQueuedRankRewards(forDate): Promise<{ paid, stillQueued }>`:
+      sweeps every `RankAward` with `creditedAt: null`. CASH (or
+      CASH_OR_TRIP with `rewardChoice: "CASH"`) credits Wallet C via
+      `postTransaction` (CREDIT user / DEBIT SYSTEM_EXTERNAL, matching
+      Binary Commission's "new money, not a transfer" shape — fully
+      available, no saving split, per mlm_rules_log's explicit "no 3-month
+      saving split unlike Direct Commission's 3%"), then stamps
+      `creditedAt`. CASH_OR_TRIP with `rewardChoice: "TRIP"` stamps
+      `creditedAt` directly with NO ledger call at all — a genuinely
+      logged-only award. CASH_OR_TRIP with `rewardChoice: null` (no choice
+      made yet) is left completely untouched — never defaults to either
+      option, stays queued indefinitely until a real choice is recorded.
+      Idempotent per award via the award's own already-stored
+      `idempotencyKey` (`rank_reward:{user_id}:{rank}`) — `postTransaction`'s
+      own replay guard plus this function only ever selecting still-queued
+      (`creditedAt: null`) rows means a second sweep can't double-pay or
+      re-touch an already-settled award. A per-call batch sweep (not a
+      per-user engine function like `evaluateRankForUser`) — deliberately
+      NOT gated on "is forDate a Friday" internally; cadence is the
+      caller's/scheduler's job (mirrors how binary-cycle-job.ts's cron
+      trigger, not the engine function, owns day-of-week gating), so the
+      function is safe to call any day and simply no-ops if nothing is due.
+- [x] Tests first, extended `rank.test.ts` (5 new tests, all passing): a
+      rank granted mid-week has no ledger entry until the sweep actually
+      runs (grant and payout are genuinely decoupled — proven by asserting
+      the specific award's own ledger scope, not by waiting for a real
+      calendar week to pass); a CASH reward pays exactly the config
+      -snapshotted amount (a real per-user active-investment referral chain
+      generates real Direct Commission side-effects on the sponsor's Wallet
+      C too, so assertions are scoped to the reward's own idempotencyKey
+      /ledger entries, never a raw absolute wallet balance — see the real
+      gap below); idempotent replay writes no second ledger entry; a
+      CASH_OR_TRIP award with CASH chosen pays correctly; a CASH_OR_TRIP
+      award with TRIP chosen creates zero ledger entries but is marked
+      settled (`creditedAt` set); a CASH_OR_TRIP award with no choice made
+      yet stays queued past a sweep — never defaulting — and later pays
+      correctly once the choice is actually recorded, proving it was
+      genuinely queued rather than silently dropped.
+- [x] Real test-design gap found and fixed while writing tests (not an
+      engine bug): early drafts asserted Wallet C balance equals exactly 0
+      before payout and exactly the reward amount after. This is wrong in
+      this project's real system — every referral built via the test's own
+      `giveActiveInvestment` helper triggers real Direct Commission (5%) on
+      ITS FIRST purchase, crediting the SAME sponsor's Wallet C as a
+      genuine, unrelated side effect before the rank reward is ever
+      evaluated. An exact-balance assertion silently assumed a pristine
+      wallet that never actually exists once a sponsor has real qualified
+      referrals (which every one of these tests requires, by construction).
+      Fixed by scoping every payout assertion to the reward's own
+      `idempotencyKey`/ledger-entry set (which `postTransaction`'s replay
+      guard already keys uniquely per award) instead of an absolute wallet
+      balance — the same "don't assume pristine shared state" discipline
+      as the pre-existing `payQueuedRankRewards` global-sweep-count
+      assertions below, just for wallet balances instead of row counts.
+- [x] Second real test-design gap, same root class: `payQueuedRankRewards`
+      has no per-user scope by design (a real Friday sweep must process
+      every currently-queued award in the DB) — so `summary.paid`/
+      `stillQueued` exact-equality assertions (`toBe(1)`) are vulnerable to
+      other tests' queued/unswept awards riding along in the same shared
+      -dev-DB call within one file run. Fixed by asserting
+      `toBeGreaterThanOrEqual(...)` on the sweep's own summary counts, and
+      always independently verifying the SPECIFIC award under test via a
+      direct `rankAward`/`ledgerEntry` query scoped to that award's own id/
+      idempotencyKey — the sweep's aggregate numbers are treated as
+      "at least what I expect," never "exactly," while the one award this
+      test actually owns is checked precisely.
+- [x] `tsc --noEmit` clean throughout. Full suite: 39 files, 288/288
+      passing (283 prior + 5 new), confirmed via a clean full run, plus
+      `reconciliation.test.ts` re-run standalone as final proof, 3/3
+      passing — confirms the rank-reward ledger writes are genuinely
+      balanced (CREDIT user / DEBIT SYSTEM_EXTERNAL) with zero drift.
+
+No new RESTRICT-FK cleanup-order gaps and no new migration this ticket —
+`payQueuedRankRewards` only writes to `rank_awards` (already cleaned up in
+this file's `afterAll` since SCRUM-85) and `ledger_entries` (already
+covered by `cleanupLedgerEntriesForUsers`).
+
+## SCRUM-87: admin rank CRUD — DONE
+
+Small schema change confirmed with Zac before building: `admin_actions` has
+no `targetRankConfigId` FK (unlike `targetPackageId` for packages) — added
+2 new `AdminActionType` enum values (`RANK_CONFIG_CREATED`,
+`RANK_CONFIG_EDITED`) via a small migration rather than a new FK column,
+logging the rank name/new values into the existing nullable `reason` text
+field (same posture as how `admin_actions.reason` already carries free
+-text context elsewhere).
+
+- [x] Migration `20260822170000_add_rank_config_admin_actions`
+      (`ALTER TYPE ... ADD VALUE`, mirrors the exact
+      `USER_SUSPENDED`/`USER_REINSTATED` precedent) + `migrate deploy` +
+      `prisma generate`.
+- [x] `src/lib/rank.ts`: `assertHasRankConfigPermission(actingAdminId)`
+      (mirrors `assertHasUserManagementPermission`/
+      `requirePackageManagement`'s exact shape — main admin bypasses,
+      sub-admin needs the explicit `RANK_CONFIG` grant).
+      `editRankConfig(actingAdminId, { rankName, mrvRequired?,
+      directReferralsRequired?, rewardAmount?, rewardType?, forDate })`:
+      finds the current active row for that `rankName`, closes it
+      (`effectiveTo: forDate`), inserts a new active row carrying over
+      every unspecified field from the closed row (same `rankOrder` —
+      changing a rank's position isn't this function's job). NEVER
+      mutates the existing row in place — this is what makes the critical
+      "no retroactive effect" invariant hold automatically: every
+      money-relevant reader (`evaluateRankForUser` reads `effectiveTo:
+      null` only; `payQueuedRankRewards` reads `RankAward`'s own
+      grant-time snapshot, never rank_config) simply never revisits a
+      closed historical row.
+      `createRankConfig(actingAdminId, { rankName, mrvRequired,
+      directReferralsRequired, rewardAmount, rewardType, rankOrder,
+      forDate })`: plain insert of a new active row (no prior row to
+      close) — used both for genuinely new ranks (e.g. adding one above
+      OG) and relies on the DB's `rank_config_one_active_per_rank` partial
+      unique index as the backstop against colliding with an
+      already-active rank of the same name, matching this codebase's
+      existing "trust the constraint" posture elsewhere. Both log to
+      `admin_actions` (`RANK_CONFIG_EDITED`/`RANK_CONFIG_CREATED`) with
+      the new values in `reason`.
+- [x] Tests first, extended `rank.test.ts` (5 new tests, all passing):
+      editing a rank's threshold takes effect for future evaluations only
+      — proven two ways in one test: the OLD row survives closed-but-
+      intact (not deleted/mutated) with its original values, and a
+      DIFFERENT user evaluated AFTER the edit under the NEW threshold no
+      longer qualifies where the old threshold would have let them;
+      an already-granted award's snapshotted `rewardAmount` is unaffected
+      by a later edit — proven by both reading the award row directly
+      (unchanged $500 after editing the rank's reward to $999,999) AND by
+      actually running `payQueuedRankRewards` and confirming the real
+      ledger credit is still the OLD $500, not the new value; an admin
+      without RANK_CONFIG is rejected for both edit and create; a
+      sub-admin WITH the RANK_CONFIG grant is allowed, and the
+      `admin_actions` audit row is confirmed written; a new rank ("Legend",
+      above OG's rankOrder) can be created and is immediately evaluable —
+      proven by actually running `evaluateRankForUser` against a real user
+      who only meets the new rank's own modest thresholds and confirming
+      it grants "Legend," not just that the config row exists.
+- [x] Real cleanup-order gap found and fixed (a new instance of the
+      standing RESTRICT-FK lesson, this time via `admin_permission_grants`
+      rather than a table introduced this session): the new "sub-admin
+      WITH the grant" test creates a real `AdminPermissionGrant` row for
+      RANK_CONFIG; `rank.test.ts`'s `afterAll` had no
+      `adminPermissionGrant.deleteMany` before `user.deleteMany`, so the
+      grant's own FK to `users` blocked deletion — caught by actually
+      running the full test file, not just the individual test passing.
+      Fixed by adding `adminPermissionGrant.deleteMany({ where: {
+      adminUserId: { in: createdUserIds } } })` (and, while auditing the
+      same failure, `adminAction.deleteMany({ where: { adminId: { in:
+      createdUserIds } } })` for the sub-admin-as-actor rows these new
+      tests also create) before `user.deleteMany`. The first run's failed
+      cleanup left 69 orphaned test users behind (everything upstream of
+      `user.deleteMany` in that `afterAll` had already succeeded, so no
+      `mrv_periods`/`rank_awards`/ledger rows were orphaned — only the
+      users themselves plus 1 leftover `admin_permission_grants` row);
+      cleaned up via a scratch script deriving the exact scope from the
+      `mrv-` email prefix, deleted after; re-ran the file in isolation
+      afterward with zero leftover rows as proof.
+- [x] Manually verified the real seeded `rank_config` data survived every
+      edit/restore cycle in these tests intact: a direct `psql` query
+      after the full suite confirmed all 8 real ranks still have their
+      exact original seed values (Investor 25,000/2/$500 CASH ... OG
+      100,000,000/20/$2,000,000 CASH) and `effective_to IS NULL` — the
+      `finally`-block restoration pattern (mirroring
+      `binary-cycle-close.test.ts`'s own historical-rate-config test
+      precedent: close the real row, test against a substitute, restore
+      the real row's `effective_to` back to null in `finally`) left no
+      trace on the shared dev DB's real config.
+- [x] `prisma migrate status` clean (31 migrations). `tsc --noEmit` clean
+      throughout. Full suite: 39 files, 293/293 passing (288 prior + 5
+      new), confirmed via a clean full run, plus `reconciliation.test.ts`
+      re-run standalone as final proof, 3/3 passing.
+
+Admin CRUD only — this exposes `editRankConfig`/`createRankConfig` as
+callable library functions with the correct permission/versioning
+semantics; wiring an actual admin-panel UI/server-action route for them is
+Phase 10/11 territory, not part of this ticket's scope.
+
+## SCRUM-88: Partner choice action + two job wrappers + worker cron — DONE
+
+Two design questions confirmed with Zac before building (both touched
+architectural judgment, not just implementation detail):
+1. Monthly evaluation job's user scope — confirmed: scope to users with an
+   `mrv_periods` row for the specific month being evaluated (a user with
+   zero MRV that month can never meet even Investor's 25,000, so scanning
+   the full users table every month would be pure waste).
+2. Monthly evaluation cron trigger — confirmed: 00:10 Asia/Dubai on the 1st
+   of each month (just after the month closes, offset from the daily
+   interest job's 00:05 to reduce midnight contention).
+
+- [x] `src/lib/rank.ts`: `chooseRankReward(userId, rank, choice)` — a user
+      records their own CASH/TRIP choice on a pending CASH_OR_TRIP award.
+      Ownership enforced by construction (`userId` is the only lookup
+      filter, invariant #9 — a user with no award of their own for `rank`
+      gets the same error as "never granted," never a leak about another
+      user's award). Rejects: no award exists for this user+rank; the
+      award's `rewardType` isn't CASH_OR_TRIP (nothing to choose for a
+      plain-CASH rank); a choice was already made (permanent once set,
+      never silently overwritten). Does not touch `creditedAt`/the ledger
+      — only `payQueuedRankRewards` (SCRUM-86) actually settles based on
+      whatever choice ends up recorded here.
+- [x] `src/lib/rank-evaluation-job.ts`: `runRankEvaluationCatchUp(today)` +
+      `RANK_EVALUATION_JOB_TYPE = "rank_evaluation"`. Mirrors
+      binary-cycle-job.ts's exact shape, stepping by calendar months
+      (period_key = "YYYY-MM") instead of weeks: `unprocessedMonths`
+      walks from the last COMPLETED month (exclusive) through the most
+      recently closeable month (the month before `today`'s own current
+      month — a month isn't closeable until it has fully ended) —
+      first-ever run only processes the single most recently closeable
+      month, never a backward walk to an epoch (standing SCRUM-52 rule).
+      `runOneMonth` scopes to every DISTINCT `userId` with an `mrv_periods`
+      row for that month, calls `evaluateRankForUser` per user, tracked in
+      `job_runs` RUNNING -> COMPLETED/FAILED exactly like
+      `runBinaryCycleCatchUp`'s per-week loop.
+- [x] `src/lib/rank-payout-job.ts`: `runRankPayoutCatchUp(today)` +
+      `RANK_PAYOUT_JOB_TYPE = "rank_payout"`. Same binary-cycle-job.ts
+      shape again, but weekly (reuses `saturdayWeekStart` from
+      binary-cycle.ts directly — the SAME Saturday-to-Friday cycle
+      boundary as binary commission, since a rank reward is also
+      "credited on the next Friday cycle"). Each unprocessed week simply
+      calls `payQueuedRankRewards(weekStart)` once — unlike the binary/
+      evaluation jobs, there's no per-user loop here, since the payout
+      sweep itself has no per-user scope by design (SCRUM-86: it pays
+      every currently-queued award in one pass, from any prior grant
+      month).
+- [x] `src/worker/index.ts`: wired both new cron triggers —
+      `10 0 1 * *` (00:10 Asia/Dubai, 1st of month) for rank evaluation,
+      `0 0 * * 6` (Saturday 00:00 Asia/Dubai, same as the binary cycle
+      job) for rank payout. Both wrapped in try/catch + console logging,
+      matching the existing two jobs' exact error-handling shape.
+- [x] Tests first: `rank.test.ts` extended with a `chooseRankReward`
+      describe block (6 tests — records CASH, records TRIP, rejects an
+      already-made choice without overwriting it, rejects a non-CASH_OR_TRIP
+      award, rejects a never-granted rank, ownership check that one user
+      cannot touch another's award). New `rank-evaluation-job.test.ts`
+      (5 tests, mirrors binary-cycle-job.test.ts's structure including
+      the `vi.spyOn` failure-injection pattern via a module-namespace
+      import): multi-month gap catch-up in order; no reprocessing of an
+      already-COMPLETED month; true-first-run processes only the most
+      recently closeable month; a mid-loop failure marks FAILED (not
+      COMPLETED) and a retry recovers and completes; a user with zero MRV
+      that month is skipped entirely. New `rank-payout-job.test.ts`
+      (4 tests, same shape stepping by weeks): multi-week catch-up paying
+      the correct closed week's queued awards for real (real ledger
+      credit confirmed, not just a job_runs row); no reprocessing of an
+      already-COMPLETED week; true-first-run processes only the most
+      recently closeable week; a mid-loop failure marks FAILED and a
+      retry completes and pays the still-queued award for real.
+- [x] Real test-design gap found and fixed while writing the job tests
+      (not an engine bug): the first draft of `rank-evaluation-job.test.ts`
+      had no `afterEach` clearing `job_runs` rows between tests within the
+      same file run — `binary-cycle-job.test.ts` (the file being mirrored)
+      already has exactly this pattern and it was initially missed when
+      copying the shape. Without it, later tests inherited earlier tests'
+      `COMPLETED` `job_runs` rows for the same `jobType`, breaking: the
+      "first-ever run" test's own `priorCount === 0` precondition; the
+      "does not reprocess" test's award (a NEW user's month appeared
+      already-COMPLETED from an earlier test, so it was silently never
+      evaluated at all — `runOneMonth` returns early without touching any
+      user when a period is already COMPLETED); and the failure-injection
+      test (the month it targeted was already COMPLETED, so the spy never
+      got a chance to intercept a real evaluation, and the call
+      short-circuited to a silent success instead of the expected
+      rejection). All three failures traced to the exact same root cause,
+      confirmed by adding the missing `afterEach` (`vi.restoreAllMocks()`
+      + `jobRun.deleteMany` scoped to `createdJobRunPeriodKeys`,
+      identical to binary-cycle-job.test.ts) — all 5 tests passed
+      immediately after, with zero other changes needed.
+- [x] `tsc --noEmit` clean throughout. Full suite: 41 files, 308/308
+      passing (293 prior + 15 new), confirmed via a clean full run, plus
+      `reconciliation.test.ts` re-run standalone as final proof, 3/3
+      passing.
+- [x] **Live verification in the running dev environment, not just unit
+      tests** (explicitly required by this ticket): `docker compose
+      restart worker` to pick up the new cron registrations, then
+      `docker compose logs worker --tail 30` — confirmed the two new
+      startup log lines actually printed on a real restart:
+      `[worker] rank evaluation job scheduled for 00:10 on the 1st of
+      each month Asia/Dubai` and `[worker] rank payout job scheduled for
+      Saturday 00:00 Asia/Dubai`, alongside the two pre-existing jobs'
+      own lines. Cross-checked this wasn't a stale/cached process by
+      `docker compose exec worker grep`-ing the live container's own
+      `src/worker/index.ts` for both new log strings (found, count 2) —
+      confirms the bind-mounted file the running container is executing
+      genuinely has this session's changes, not an old cached build.
+      `docker compose ps worker` confirmed the container stayed up (no
+      crash loop) 30+ seconds after the restart.
+
+Both jobs, the choice action, and the worker wiring are all in place.
+Everything from the phase brief's own required pieces is now built:
+rank_config (SCRUM-83), MRV accrual (SCRUM-84), evaluation/grant
+(SCRUM-85), payout engine (SCRUM-86), admin CRUD (SCRUM-87), and the
+choice action + batch job wrappers + cron (SCRUM-88, this ticket). The
+phase brief's own exit test has not yet been run end-to-end against the
+real dev DB as a single scripted scenario — that's the natural last step
+before declaring Phase 9 complete.
+
+## SCRUM-89: Phase 9 exit test — RUN AND PASSED
+
+Ran a real scratch script (`.scratch_exit_test_phase9.ts`, deleted after —
+matches the Phase 3/5/6/7/8 exit-test convention) directly against the dev
+database, using real lib functions (`registerAsRoot`/`registerWithSponsor`,
+`adminCreditWalletB`, `purchasePackage`, `evaluateRankForUser`,
+`chooseRankReward`, `payQueuedRankRewards`) as one continuous end-to-end
+scenario — not a re-run of the permanent unit suite. Migration state
+verified clean first (`prisma migrate status`); confirmed no other Node
+process was running before starting, per the standing SCRUM-79/81
+concurrency lesson.
+
+### Results (28/28 assertions passed)
+
+**Scenario 1 — Partner granted immediately, Investor NOT also paid:**
+- Sponsor + 4 qualified referrals, each buying a real $25,000 package
+  (4 x $25,000 = $100,000 real accrued MRV, confirmed by direct
+  `mrv_periods` query — not seeded) -> `evaluateRankForUser` grants
+  Partner (not Investor), snapshotted at $2,000 CASH_OR_TRIP,
+  `creditedAt: null` immediately after grant (queued, not auto-paid)
+- Investor's threshold (25,000/2) was also genuinely crossed that month
+  but has NO real `rank_awards` row — instead a real `rank_forfeits` row
+  exists, stamped to September, proving the "only highest is paid" rule
+  is enforced as a permanent decision, not just an absent side effect
+
+**Scenario 2 — CASH choice credited on the next Friday cycle:**
+- `chooseRankReward(sponsor, "Partner", "CASH")` recorded for real
+- `payQueuedRankRewards` on a real Friday date credits exactly $2,000 to
+  Wallet C — confirmed via the real ledger entries (CREDIT user / DEBIT
+  SYSTEM_EXTERNAL, entryType RANK_REWARD) AND via the real measured
+  Wallet C balance delta ($2,000 exactly), not just the job's own summary
+  count
+
+**Scenario 3 — repeating the same performance next month pays nothing:**
+- Same sponsor, 4 more referrals, another real $100,000 of October MRV
+  purchased for real -> `evaluateRankForUser` for October grants NOTHING
+  (`granted: false`)
+- Still exactly 1 Partner award ever (no duplicate)
+- Investor is STILL not granted in October — proves the September
+  forfeit is genuinely permanent (per the SCRUM-85 design decision),
+  not merely a one-time skip that a repeat performance could bypass
+
+**Scenario 4 — TRIP choice is logged-only, no ledger credit:**
+- A second, independent sponsor also granted Partner for real
+- `chooseRankReward(tripSponsor, "Partner", "TRIP")` recorded
+- After the Friday sweep: `creditedAt` is set (marked settled) but ZERO
+  ledger entries exist under that award's idempotency key, and the
+  sponsor's Wallet C balance is measured completely unchanged —
+  confirms "logged-only, no money moved" for real, not just by absence
+  of an assertion
+
+### Real script bug found and fixed (not an engine bug)
+First draft's referral purchases inflated MRV to $400,400 (then $400,000
+after a partial fix) instead of the intended $100,000 — caused by
+purchasing BOTH a $100,000 Elite package per referral AND calling the
+test's own `giveActiveInvestment` helper (an extra $100 purchase) for
+each, when a single purchase per referral already satisfies both "holds
+an active investment" (qualification) and the real MRV-accruing event.
+Root-caused by reading the actual accrued `mrv_periods.volume` after the
+first failure rather than guessing, then fixed by using one real $25,000
+purchase per referral (4 x $25,000 = exactly $100,000) with no redundant
+second purchase.
+
+### Cleanup and regression check
+- Script's own cleanup used the same ordered deletion pattern as prior
+  phase exit tests (`rankForfeit` -> `rankAward` -> `mrvPeriod` ->
+  `savingLot` -> `bvEntry` -> `investment` -> `cleanupLedgerEntriesForUsers`
+  -> `package` -> `securityQuestion` -> `walletAccount` -> `binaryNode` ->
+  `user`) — reported "Cleaned up 14 users, 3 packages, 14 investments."
+- Verified zero leftover `phase9exit-*` users and zero orphaned
+  `rank_awards`/`rank_forfeits`/`mrv_periods` rows via a separate direct
+  query, before even getting to the full-suite pass.
+- Scratch script deleted; `git status` confirms no trace.
+- Full suite: 41 files, 308/308 passing (same count as SCRUM-88 — an
+  exit-test scratch script, not a permanent test file, so no new test
+  count). `tsc --noEmit` clean.
+- `reconciliation.test.ts` (the whole-database solvency check) explicitly
+  re-run standalone as the final step, per the standing rule — 3/3
+  passing on its own, not just bundled into the full-run count. Confirms
+  the rank-reward ledger writes across all 4 scenarios stayed genuinely
+  balanced with zero drift.
+
+**PHASE 9 EXIT TEST: ALL 4 SCENARIOS / 28 ASSERTIONS PASSED. Full suite
+clean, including standalone whole-database reconciliation.**
+
+Phase 9 is complete pending user confirmation in the operation-room chat
+per CLAUDE.md's build-order rule.
+
 # Phase 8 — Binary Cycle Engine
 
 ## SCRUM-82: Phase 8 exit test — RUN AND PASSED

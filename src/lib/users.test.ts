@@ -46,6 +46,7 @@ afterAll(async () => {
     where: { OR: [{ targetUserId: { in: createdUserIds } }, { adminId: { in: createdUserIds } }] },
   });
   await prisma.adminPermissionGrant.deleteMany({ where: { adminUserId: { in: createdUserIds } } });
+  await prisma.mrvPeriod.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.savingLot.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.bvEntry.deleteMany({ where: { sourceInvestmentId: { in: createdInvestmentIds } } });
   await prisma.investment.deleteMany({ where: { id: { in: createdInvestmentIds } } });

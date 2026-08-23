@@ -823,3 +823,32 @@ named to be believed, once it's been deliberately isolated and confirmed
 to disappear — the SCRUM-79 lesson's bar for "prove it, don't just retry"
 was met here by isolating and reproducing clean, since the original
 contaminating process could no longer be inspected after the fact).
+
+## 2026-08-22 — Phase 9 (SCRUM-85)
+Mistake: none in the shipped code — caught by a test the ticket itself
+specified before implementation was declared done. `evaluateRankForUser`'s
+first draft skipped any rank already in `rank_awards` and granted the
+single highest newly-qualified rank, which correctly handled the exit
+test's own scenario. But the ticket's own required test case ("repeating
+the same qualifying performance in a later month grants nothing") exposed
+a real gap: a LOWER rank crossed the same month as a granted HIGHER rank
+(e.g. Investor crossed alongside Partner, but never itself given a
+rank_awards row since only the highest is paid) was never recorded
+anywhere — so it stayed silently eligible, and a later month's identical
+performance would grant it late, effectively paying a "lower rank in the
+same month" after all, contradicting the rule's own wording.
+Rule: "only the highest is paid" implies the lower ranks crossed that
+month are DECIDED AGAINST, not merely "not paid this time" — a system
+that tracks permanence only for what WAS granted (not also for what was
+considered-and-lost) will let a forfeited rank resurface later under
+repeat performance. Any "grant the best of several qualifying options,
+permanently" design needs a place to record the ones that lost, not just
+the one that won — added a dedicated `RankForfeit` table (kept separate
+from `RankAward` so the awards table stays a clean audit trail of real
+rewards, confirmed with Zac before adding the second table rather than
+conflating the two). Caught here specifically because the ticket's
+required test list included the "repeat performance" case up front,
+before implementation — a reminder that the test list in a ticket's own
+instructions often encodes exactly the edge case a first-draft
+implementation will miss; don't treat "the obvious cases pass" as done
+until every explicitly-requested test is actually written and green.

@@ -17,6 +17,7 @@ const sampleQuestions = [
 ];
 
 afterAll(async () => {
+  await prisma.mrvPeriod.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.bvEntry.deleteMany({ where: { ancestorUserId: { in: createdUserIds } } });
   await prisma.savingLot.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.investment.deleteMany({ where: { id: { in: createdInvestmentIds } } });

@@ -80,6 +80,7 @@ async function suspend(userId: string) {
 }
 
 afterAll(async () => {
+  await prisma.mrvPeriod.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.savingLot.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.bvEntry.deleteMany({ where: { sourceInvestmentId: { in: createdInvestmentIds } } });
   await prisma.investment.deleteMany({ where: { id: { in: createdInvestmentIds } } });

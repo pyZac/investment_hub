@@ -53,6 +53,7 @@ describe("isLegActive", () => {
   ];
 
   afterAll(async () => {
+    await prisma.mrvPeriod.deleteMany({ where: { userId: { in: createdUserIds } } });
     await prisma.bvEntry.deleteMany({ where: { ancestorUserId: { in: createdUserIds } } });
     await prisma.savingLot.deleteMany({ where: { userId: { in: createdUserIds } } });
     await prisma.investment.deleteMany({ where: { id: { in: createdInvestmentIds } } });
@@ -208,6 +209,7 @@ describe("leg-activity ripple on capital release / suspension (SCRUM-77)", () =>
 
   afterAll(async () => {
     await prisma.adminAction.deleteMany({ where: { targetUserId: { in: createdUserIds } } });
+    await prisma.mrvPeriod.deleteMany({ where: { userId: { in: createdUserIds } } });
     await prisma.investment.deleteMany({ where: { id: { in: createdInvestmentIds } } });
     await cleanupLedgerEntriesForUsers(createdUserIds);
     await prisma.package.deleteMany({ where: { id: { in: createdPackageIds } } });

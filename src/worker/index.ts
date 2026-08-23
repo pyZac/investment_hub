@@ -6,6 +6,8 @@ import cron from "node-cron";
 import { config } from "../lib/config";
 import { runDailyInterestCatchUp } from "../lib/daily-interest-job";
 import { runBinaryCycleCatchUp } from "../lib/binary-cycle-job";
+import { runRankEvaluationCatchUp } from "../lib/rank-evaluation-job";
+import { runRankPayoutCatchUp } from "../lib/rank-payout-job";
 
 /**
  * Worker process entrypoint. This file is the one place `new Date()` is
@@ -53,7 +55,56 @@ cron.schedule(
   { timezone: config.TIMEZONE },
 );
 
+/**
+ * Monthly rank evaluation (Phase 9, SCRUM-88). 00:10 Asia/Dubai on the 1st
+ * of each month — just after midnight, once the just-ended calendar month's
+ * MRV totals are final (a month isn't closeable/evaluable until it has
+ * fully ended). Offset 5 minutes after the daily interest job's own 00:05
+ * trigger to reduce contention on the same midnight boundary.
+ * runRankEvaluationCatchUp itself takes `today` as a parameter and stays
+ * pure/testable; catch-up logic inside it means a missed trigger doesn't
+ * skip a month, it processes it on the next successful run.
+ */
+cron.schedule(
+  "10 0 1 * *",
+  async () => {
+    console.log("[worker] rank evaluation job triggered");
+    try {
+      await runRankEvaluationCatchUp(new Date());
+      console.log("[worker] rank evaluation job completed");
+    } catch (error) {
+      console.error("[worker] rank evaluation job failed", error);
+    }
+  },
+  { timezone: config.TIMEZONE },
+);
+
+/**
+ * Weekly rank reward payout sweep (Phase 9, SCRUM-88). Saturday 00:00
+ * Asia/Dubai — the SAME cadence as the binary cycle job, since both settle
+ * on the Saturday-to-Friday weekly processing cycle boundary (a rank
+ * reward is "credited on the next Friday cycle," per mlm_rules_log).
+ * runRankPayoutCatchUp itself takes `today` as a parameter and stays
+ * pure/testable; catch-up logic inside it means a missed trigger doesn't
+ * skip a week, it processes it on the next successful run.
+ */
+cron.schedule(
+  "0 0 * * 6",
+  async () => {
+    console.log("[worker] rank payout job triggered");
+    try {
+      await runRankPayoutCatchUp(new Date());
+      console.log("[worker] rank payout job completed");
+    } catch (error) {
+      console.error("[worker] rank payout job failed", error);
+    }
+  },
+  { timezone: config.TIMEZONE },
+);
+
 console.log(`[worker] started, daily interest job scheduled for 00:05 ${config.TIMEZONE}`);
 console.log(`[worker] binary cycle job scheduled for Saturday 00:00 ${config.TIMEZONE}`);
+console.log(`[worker] rank evaluation job scheduled for 00:10 on the 1st of each month ${config.TIMEZONE}`);
+console.log(`[worker] rank payout job scheduled for Saturday 00:00 ${config.TIMEZONE}`);
 
 setInterval(() => {}, 1 << 30);
