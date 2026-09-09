@@ -316,6 +316,82 @@ export async function payQueuedRankRewards(forDate: Date): Promise<PayQueuedRank
   return { paid, stillQueued };
 }
 
+export type RankProgress = {
+  /** Highest-rankOrder rank ever granted, or null if the user has none yet. */
+  currentRank: { name: string; rankOrder: number } | null;
+  /**
+   * The next active rank to progress toward — the lowest active rankOrder
+   * strictly greater than currentRank's (or the lowest active rank at all,
+   * for an unranked user). Null only when currentRank is already the highest
+   * active rankOrder (the top/OG rank) — there is nothing higher to show
+   * progress toward.
+   */
+  nextRank: {
+    name: string;
+    mrvRequired: Prisma.Decimal;
+    directReferralsRequired: number;
+  } | null;
+  /** Current calendar month's MRV (Asia/Dubai), 0 if no mrv_periods row yet. */
+  currentMrv: Prisma.Decimal;
+  /** Live count, same definition as qualifiedDirectReferralCount. */
+  currentReferralCount: number;
+};
+
+/**
+ * Everything a dashboard "rank progress" panel needs to render: the user's
+ * current permanent rank (from rank_awards — never a live re-evaluation,
+ * since ranks are permanent per invariant #6 and this must reflect what was
+ * actually granted, not what today's numbers alone would qualify for), the
+ * next active rank to progress toward, and this month's live MRV/referral
+ * numbers to compare against that next rank's thresholds.
+ *
+ * A user with no rank_awards row yet has `currentRank: null` ("Unranked", not
+ * an error) and `nextRank` is the lowest-rankOrder active rank (Investor,
+ * currently) — everyone's first rank to work toward. A user already at the
+ * highest active rankOrder (OG, currently) has `nextRank: null` — the
+ * caller must render a "max rank achieved" state, not divide by a
+ * nonexistent threshold.
+ *
+ * `currentMrv`/`currentReferralCount` are always the LIVE current-month/
+ * current-moment values (never the month currentRank was actually granted
+ * in) — they exist purely to show progress toward `nextRank`, which by
+ * definition has not been granted yet, so there is no historical snapshot to
+ * read instead.
+ */
+export async function getRankProgressForUser(userId: string, forDate: Date): Promise<RankProgress> {
+  const activeRanks = await prisma.rankConfig.findMany({
+    where: { effectiveTo: null },
+    orderBy: { rankOrder: "asc" },
+  });
+
+  const awards = await prisma.rankAward.findMany({ where: { userId } });
+  const awardedRankNames = new Set(awards.map((a) => a.rank));
+  const awardedActiveRanks = activeRanks.filter((r) => awardedRankNames.has(r.rankName));
+  const highestAwarded =
+    awardedActiveRanks.length > 0
+      ? awardedActiveRanks.reduce((a, b) => (b.rankOrder > a.rankOrder ? b : a))
+      : null;
+
+  const currentRank = highestAwarded ? { name: highestAwarded.rankName, rankOrder: highestAwarded.rankOrder } : null;
+
+  const nextRankRow = activeRanks.find((r) => r.rankOrder > (currentRank?.rankOrder ?? -Infinity)) ?? null;
+  const nextRank = nextRankRow
+    ? {
+        name: nextRankRow.rankName,
+        mrvRequired: nextRankRow.mrvRequired,
+        directReferralsRequired: nextRankRow.directReferralsRequired,
+      }
+    : null;
+
+  const month = dubaiMonthKey(forDate);
+  const mrvPeriod = await prisma.mrvPeriod.findUnique({ where: { userId_month: { userId, month } } });
+  const currentMrv = mrvPeriod?.volume ?? new Prisma.Decimal(0);
+
+  const currentReferralCount = await qualifiedDirectReferralCount(userId);
+
+  return { currentRank, nextRank, currentMrv, currentReferralCount };
+}
+
 async function assertHasRankConfigPermission(actingAdminId: string): Promise<void> {
   const admin = await prisma.user.findUnique({ where: { id: actingAdminId } });
   if (!admin || admin.role !== "ADMIN") {

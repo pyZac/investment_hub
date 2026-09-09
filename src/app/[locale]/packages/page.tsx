@@ -1,5 +1,5 @@
 import { getTranslations } from "next-intl/server";
-import { requireSession } from "@/lib/route-guard";
+import { requireSessionOrRedirect } from "@/lib/page-guard";
 import { listPurchasablePackages } from "@/lib/packages";
 import { getWalletBalance } from "@/lib/wallets";
 import { toDisplay } from "@/lib/display";
@@ -7,7 +7,7 @@ import { PackageGrid } from "./package-grid";
 
 export default async function PackagesPage() {
   const t = await getTranslations("Packages");
-  const user = await requireSession(new Date());
+  const user = await requireSessionOrRedirect(new Date());
 
   const [packages, walletB] = await Promise.all([
     listPurchasablePackages(),

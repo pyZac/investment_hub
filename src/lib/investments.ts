@@ -148,6 +148,25 @@ export async function listInvestmentsForUser(userId: string) {
 }
 
 /**
+ * A user's own ACTIVE investments only, newest first — for surfaces that
+ * track in-flight lock countdowns (e.g. the dashboard's countdown-ring
+ * panel), where a CAPITAL_RELEASED investment's countdown has already
+ * finished and showing it would just be a "100% done" ring with nothing
+ * useful to track. `listInvestmentsForUser` (unfiltered, full history
+ * including released investments) remains the right call for the Phase 3
+ * investments page, which is a historical ledger view, not an active-lock
+ * tracker — this is a separate function rather than a filter added to that
+ * one so neither caller's intent gets ambiguous.
+ */
+export async function listActiveInvestmentsForUser(userId: string) {
+  return prisma.investment.findMany({
+    where: { userId, status: "ACTIVE" },
+    include: { package: true },
+    orderBy: { purchasedAt: "desc" },
+  });
+}
+
+/**
  * Whole days remaining until `target`, relative to `now` (explicit param per
  * invariant #4, even for display-only logic). 0 once `target` has passed —
  * callers treat 0 as "unlocked"/"started", never negative countdowns.

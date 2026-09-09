@@ -2,14 +2,32 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/*
+ * Investa design system — dark mode only (see /docs/design-system.md).
+ * There is no `.dark` variant to toggle: :root IS the dark theme. This is a
+ * deliberate premium-fintech decision, not an oversight — see the doc's
+ * "Why dark-only" section before adding a light theme.
+ */
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  --font-heading: var(--font-heading);
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --color-surface: var(--surface);
+  --color-surface-foreground: var(--surface-foreground);
+
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-muted: var(--brand-muted);
+
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -27,6 +45,7 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -49,72 +68,63 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.47 0.17 260);
-  --primary-foreground: oklch(0.98 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.47 0.17 260 / 50%);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.47 0.17 260);
-  --sidebar-primary-foreground: oklch(0.98 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.47 0.17 260 / 50%);
-}
+  /* Base surfaces — Deep Teal (60%) / Dark Teal (20%) */
+  --background: #06201f;
+  --foreground: #f4f5f1;
+  --surface: #0d2c2b;
+  --surface-foreground: #f4f5f1;
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.65 0.16 260);
-  --primary-foreground: oklch(0.15 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.65 0.16 260 / 50%);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.65 0.16 260);
-  --sidebar-primary-foreground: oklch(0.15 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.65 0.16 260 / 50%);
+  --card: #0d2c2b;
+  --card-foreground: #f4f5f1;
+  --popover: #0d2c2b;
+  --popover-foreground: #f4f5f1;
+
+  /* Brand — Muted Mint (10%), primary CTA/highlight color */
+  --primary: #70c9aa;
+  --primary-foreground: #06201f;
+  --brand: #70c9aa;
+  --brand-foreground: #06201f;
+  --brand-muted: #a8c9b8;
+
+  /* Secondary / supporting — Soft Sage (5%) */
+  --secondary: #123634;
+  --secondary-foreground: #a8c9b8;
+
+  --muted: #123634;
+  --muted-foreground: #8d9b98;
+
+  --accent: #163e3c;
+  --accent-foreground: #f4f5f1;
+
+  /* Semantic feedback colors, tuned for contrast against #06201F */
+  --success: #4ade80;
+  --success-foreground: #06201f;
+  --warning: #f0b429;
+  --warning-foreground: #06201f;
+  --destructive: #ef5a6f;
+  --destructive-foreground: #06201f;
+
+  --border: color-mix(in oklab, #a8c9b8 16%, transparent);
+  --input: color-mix(in oklab, #a8c9b8 20%, transparent);
+  --ring: color-mix(in oklab, #70c9aa 55%, transparent);
+
+  /* Chart series — mint family first, then supporting hues that stay in-gamut */
+  --chart-1: #70c9aa;
+  --chart-2: #a8c9b8;
+  --chart-3: #4ade80;
+  --chart-4: #f0b429;
+  --chart-5: #5fb3d9;
+
+  --radius: 0.75rem;
+
+  --sidebar: #06201f;
+  --sidebar-foreground: #f4f5f1;
+  --sidebar-primary: #70c9aa;
+  --sidebar-primary-foreground: #06201f;
+  --sidebar-accent: #123634;
+  --sidebar-accent-foreground: #f4f5f1;
+  --sidebar-border: color-mix(in oklab, #a8c9b8 14%, transparent);
+  --sidebar-ring: color-mix(in oklab, #70c9aa 55%, transparent);
 }
 
 @layer base {
@@ -126,5 +136,25 @@
   }
   html {
     @apply font-sans;
+    color-scheme: dark;
   }
+}
+
+/*
+ * Dashboard-only background depth: a deep teal radial glow from top-center
+ * fading to near-black, plus a faint dot-matrix texture. Scoped to this one
+ * class (applied to the dashboard page's outer wrapper only) — not global,
+ * and never on card surfaces (see design-system.md's "surface contrast is
+ * the elevation cue" rule).
+ */
+.dashboard-background {
+  background-color: var(--background);
+  background-image:
+    radial-gradient(ellipse 80% 60% at 50% 0%, color-mix(in oklab, var(--brand) 10%, transparent), transparent 70%),
+    radial-gradient(circle, color-mix(in oklab, var(--brand-muted) 4%, transparent) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    28px 28px;
+  background-position: center top, 0 0;
+  background-repeat: no-repeat, repeat;
 }

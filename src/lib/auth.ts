@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { prisma } from "./prisma";
-import { verifyPassword } from "./password";
+import { verifyPassword, hashPassword } from "./password";
 import { createSession } from "./session";
 import { assertNotLockedOut, recordFailedAttempt, maybeTriggerLockout } from "./rate-limit";
 import { createPendingAuth, consumePendingAuth } from "./pending-auth";
@@ -63,6 +63,34 @@ export async function login(
     token,
     expiresAt,
   };
+}
+
+const changePasswordInputSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8),
+});
+
+/**
+ * Self-service password change for an already-authenticated user (invariant
+ * #9: caller must pass the requesting session's own userId, never a
+ * client-supplied one). Requires the correct current password — same
+ * verifyPassword() check as login, no separate rate-limit bucket since this
+ * route is already behind requireSession().
+ */
+export async function changePassword(
+  userId: string,
+  input: z.infer<typeof changePasswordInputSchema>,
+): Promise<void> {
+  const data = changePasswordInputSchema.parse(input);
+
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+  const valid = await verifyPassword(user.passwordHash, data.currentPassword);
+  if (!valid) {
+    throw new Error("Current password is incorrect.");
+  }
+
+  const passwordHash = await hashPassword(data.newPassword);
+  await prisma.user.update({ where: { id: userId }, data: { passwordHash } });
 }
 
 const TOTP_EVENT_TYPES = ["TOTP_FAILED"] as const;

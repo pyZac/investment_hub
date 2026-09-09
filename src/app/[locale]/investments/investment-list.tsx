@@ -29,7 +29,7 @@ export async function InvestmentList({
           <p className="text-base font-medium">{t("emptyStateTitle")}</p>
           <p className="max-w-sm text-sm text-muted-foreground">{t("emptyStateDescription")}</p>
         </div>
-        <Button className="mt-2 cursor-pointer" render={<Link href="/packages" />}>
+        <Button className="mt-2 cursor-pointer" nativeButton={false} render={<Link href="/packages" />}>
           {t("browsePackages")}
         </Button>
       </div>

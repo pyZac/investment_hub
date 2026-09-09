@@ -91,7 +91,7 @@ function TransferCard({
 
   return (
     <>
-      <Card className="flex flex-col justify-between border-border/60 shadow-sm transition-shadow hover:shadow-md">
+      <Card className="flex flex-col justify-between border-border/60 shadow-sm transition-shadow hover:shadow-md hover:shadow-black/20">
         <CardHeader className="pb-2">
           <CardTitle className="flex flex-row items-center gap-2 text-base font-medium">
             <ArrowRightLeft className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -101,7 +101,7 @@ function TransferCard({
         <CardContent className="flex-1 space-y-4">
           <div className="flex items-center justify-between gap-2 text-sm">
             <span className="text-muted-foreground">{t("availableLabel")}</span>
-            <span className="font-medium tabular-nums">{withdrawable}</span>
+            <span className="font-heading font-medium tabular-nums">{withdrawable}</span>
           </div>
 
           {disabled ? (
@@ -145,7 +145,7 @@ function TransferCard({
           <DialogHeader>
             {success ? (
               <DialogTitle className="flex flex-row items-center gap-2">
-                <CheckCircle2 className="size-5 shrink-0 text-emerald-600 dark:text-emerald-500" aria-hidden="true" />
+                <CheckCircle2 className="size-5 shrink-0 text-success" aria-hidden="true" />
                 <span>{t("transferSuccessTitle")}</span>
               </DialogTitle>
             ) : (

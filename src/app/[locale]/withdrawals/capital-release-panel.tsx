@@ -65,8 +65,10 @@ export function CapitalReleasePanel({
 
   if (investments.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border py-14 text-center">
-        <PiggyBank className="size-10 text-muted-foreground/60" aria-hidden="true" />
+      <div className="flex flex-col items-center gap-3 py-14 text-center">
+        <div className="flex size-12 items-center justify-center rounded-full bg-muted/60 text-muted-foreground">
+          <PiggyBank className="size-6" aria-hidden="true" />
+        </div>
         <p className="max-w-sm text-sm text-muted-foreground">{t("capitalReleaseEmptyState")}</p>
       </div>
     );
@@ -82,13 +84,13 @@ export function CapitalReleasePanel({
           return (
             <Card
               key={investment.id}
-              className="flex flex-col justify-between border-border/60 shadow-sm transition-shadow hover:shadow-md"
+              className="flex flex-col justify-between border-border/60 shadow-sm transition-shadow hover:shadow-md hover:shadow-black/20"
             >
               <CardHeader className="pb-2">
                 <CardTitle className="text-base font-medium">{t("capitalReleaseCardTitle")}</CardTitle>
               </CardHeader>
               <CardContent className="flex-1 space-y-3">
-                <p className="text-2xl font-bold tabular-nums">{investment.amount}</p>
+                <p className="font-heading text-2xl font-bold tabular-nums">{investment.amount}</p>
                 {!unlocked ? (
                   <div className="flex flex-row items-center gap-2 text-sm text-muted-foreground">
                     <Lock className="size-4 shrink-0" aria-hidden="true" />
@@ -100,7 +102,7 @@ export function CapitalReleasePanel({
                     <span>{t("fridayOnlyCountdown", { days: daysUntilFriday })}</span>
                   </div>
                 ) : (
-                  <div className="flex flex-row items-center gap-2 text-sm text-emerald-600 dark:text-emerald-500">
+                  <div className="flex flex-row items-center gap-2 text-sm text-success">
                     <CheckCircle2 className="size-4 shrink-0" aria-hidden="true" />
                     <span>{t("capitalUnlockedReady")}</span>
                   </div>
@@ -129,7 +131,7 @@ export function CapitalReleasePanel({
           <DialogHeader>
             {success ? (
               <DialogTitle className="flex flex-row items-center gap-2">
-                <CheckCircle2 className="size-5 shrink-0 text-emerald-600 dark:text-emerald-500" aria-hidden="true" />
+                <CheckCircle2 className="size-5 shrink-0 text-success" aria-hidden="true" />
                 <span>{t("capitalReleaseSuccessTitle")}</span>
               </DialogTitle>
             ) : (

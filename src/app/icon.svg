@@ -1,0 +1,40 @@
+<svg width="40" height="40" viewBox="0 0 1080 1080" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="investaLegGradient" x1="635.22" y1="739.67" x2="503.38" y2="602.55" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#96F2C9"/>
+      <stop offset="0.28" stop-color="#6AD5AE"/>
+      <stop offset="1" stop-color="#289B88"/>
+    </linearGradient>
+    <linearGradient id="investaLegGradientRight" x1="506.92" y1="391.95" x2="768.49" y2="722.08" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#96F2C9"/>
+      <stop offset="0.28" stop-color="#6AD5AE"/>
+      <stop offset="1" stop-color="#289B88"/>
+    </linearGradient>
+    <linearGradient id="investaCrossbarGradient" x1="496.43" y1="420.34" x2="381.47" y2="751.53" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#96F2C9"/>
+      <stop offset="0.28" stop-color="#6AD5AE"/>
+      <stop offset="1" stop-color="#289B88"/>
+    </linearGradient>
+    <linearGradient id="investaCrossbarFadeGradient" x1="429.28" y1="556.87" x2="562.18" y2="473.55" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#96F2C9" stop-opacity="0"/>
+      <stop offset="1" stop-color="#289B88"/>
+    </linearGradient>
+  </defs>
+
+  <path
+    d="M632.72,719.3H571a19.09,19.09,0,0,1-17.23-10.85L533,665a16.78,16.78,0,0,0-15.13-9.53H476.31L502.39,601v0l4.33-9a20,20,0,0,1,18-11.36h22.83a29.77,29.77,0,0,1,26.86,16.93l27.74,58Z"
+    fill="url(#investaLegGradient)"
+  />
+  <path
+    d="M734.08,719.3H685.16a18.77,18.77,0,0,1-16.95-10.67l-25.43-53.14-35.84-74.88-47.39-99L544.43,450s0,0,0-.06L540,440.74l-35.9-75a20.55,20.55,0,0,1,13.48-5h44.8A20.65,20.65,0,0,1,581,372.45q7.68,16.07,15.37,32.13,42.12,88,84.25,176l35.84,74.88,25,52.1A8.19,8.19,0,0,1,734.08,719.3Z"
+    fill="url(#investaLegGradientRight)"
+  />
+  <path
+    d="M544.39,449.92a4.9,4.9,0,0,0-8.8.06L519.7,483.17l-36.86,77-9.78,20.45-35.84,74.88-25.43,53.14a18.77,18.77,0,0,1-17,10.67H345.92a8.19,8.19,0,0,1-7.37-11.71l25-52.1,35.84-74.88L446,483.15l36.86-77q8.07-16.85,16.13-33.71c0-.09.09-.15.13-.24a19.94,19.94,0,0,1,5-6.48l35.9,75Z"
+    fill="url(#investaCrossbarGradient)"
+  />
+  <path
+    d="M544.39,449.92a4.9,4.9,0,0,0-8.8.06L519.7,483.17l-36.86,77-9.78,20.45-35.84,74.88-25.43,53.14a18.77,18.77,0,0,1-17,10.67H345.92a8.19,8.19,0,0,1-7.37-11.71l25-52.1,35.84-74.88L446,483.15l36.86-77q8.07-16.85,16.13-33.71c0-.09.09-.15.13-.24a19.94,19.94,0,0,1,5-6.48l35.9,75Z"
+    fill="url(#investaCrossbarFadeGradient)"
+  />
+</svg>

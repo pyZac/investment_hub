@@ -15,10 +15,10 @@ type ReferralRow = {
   hasPurchased: boolean;
 };
 
-function statusBadgeVariant(referral: ReferralRow): "default" | "secondary" | "destructive" {
+function statusBadgeVariant(referral: ReferralRow): "success" | "outline" | "destructive" {
   if (referral.suspendedAt) return "destructive";
-  if (referral.hasPurchased) return "default";
-  return "secondary";
+  if (referral.hasPurchased) return "success";
+  return "outline";
 }
 
 export function ReferralsList({ referrals, locale }: { referrals: ReferralRow[]; locale: string }) {
@@ -26,10 +26,12 @@ export function ReferralsList({ referrals, locale }: { referrals: ReferralRow[];
 
   if (referrals.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border py-14 text-center">
-        <Users className="size-10 text-muted-foreground/60" aria-hidden="true" />
+      <div className="flex flex-col items-center gap-3 py-14 text-center">
+        <div className="flex size-12 items-center justify-center rounded-full bg-muted/60 text-muted-foreground">
+          <Users className="size-6" aria-hidden="true" />
+        </div>
         <div className="space-y-1">
-          <p className="text-base font-medium">{t("referralsEmptyStateTitle")}</p>
+          <p className="text-sm font-medium">{t("referralsEmptyStateTitle")}</p>
           <p className="max-w-sm text-sm text-muted-foreground">{t("referralsEmptyStateDescription")}</p>
         </div>
       </div>
@@ -41,7 +43,7 @@ export function ReferralsList({ referrals, locale }: { referrals: ReferralRow[];
       {referrals.map((referral) => (
         <Card
           key={referral.id}
-          className="flex flex-col justify-between border-border/60 shadow-sm transition-shadow hover:shadow-md"
+          className="flex flex-col justify-between border-border/60 shadow-sm transition-shadow hover:shadow-md hover:shadow-black/20"
         >
           <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
             <CardTitle className="text-base font-medium">{referral.name}</CardTitle>

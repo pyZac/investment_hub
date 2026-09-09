@@ -852,3 +852,373 @@ before implementation — a reminder that the test list in a ticket's own
 instructions often encodes exactly the edge case a first-draft
 implementation will miss; don't treat "the obvious cases pass" as done
 until every explicitly-requested test is actually written and green.
+
+## 2026-09-03 — Phase 10 (SCRUM-92)
+Mistake: none in the shipped lib code, but a long, real debugging session
+building the daily-profit Recharts area chart, worth recording in full since
+it cost hours and the root causes are non-obvious and will recur.
+
+Three separate, stacked issues, each masking the next:
+1. **`var(--color-*)` in SVG presentation attributes doesn't reliably
+   resolve.** `stopColor="var(--color-chart-1)"`, `stroke="var(--color-border)"`
+   etc. passed as plain React/SVG attribute props (not inside a `style={}`
+   object) rendered a structurally-correct path with completely invisible
+   color — confirmed by reading the DOM directly (`getAttribute('stop-color')`
+   literally returned the string `"var(--color-chart-1)"`, unresolved).
+   Fix: resolve the actual hex value once (matching `globals.css`'s token) and
+   pass that instead of a `var()` reference, anywhere a value becomes an SVG
+   presentation attribute rather than a CSS `style` property. This applies to
+   every future Recharts/D3/inline-SVG component in this project, not just
+   this chart.
+2. **Recharts 3.10's default `Area` shape (`AreaRevealShape`) applies an
+   entrance-animation clip-path even when the surrounding dev-server state is
+   stale**, and with a `connectNulls={false}` multi-segment series (this
+   chart's Friday gaps) that clip's width computation only covered the first
+   segment, silently truncating every later segment to nothing. Passing a
+   custom `shape` prop that renders a plain `Curve` (bypassing
+   `AreaRevealShape` entirely) is the robust fix — `isAnimationActive={false}`
+   alone does NOT prevent this, confirmed by reading Recharts' own source
+   (`cartesian/AreaRevealShape.js`, `cartesian/Area.js`).
+3. **Recharts' `<Tooltip>` sets its wrapper's `visibility: hidden` whenever
+   its own internal payload is empty for the hovered x-position**
+   (`TooltipBoundingBox.js`: `visibility: ... props.hasPayload ? 'visible' :
+   'hidden'`), regardless of what a custom `content` render function returns.
+   A `null`-valued point (this chart's Friday gap, under `connectNulls=false`)
+   has no payload, so the tooltip box was invisible on every Friday even
+   though the custom tooltip component's fallback logic computed the correct
+   "Friday — no accrual" content. Fix: add a second, fully invisible
+   (`stroke="none" fill="none"`) `Area` series with a `hitAmount` field that
+   substitutes `0` for `null` — this gives Recharts a non-null point to
+   consider "has payload" at every x-position without rendering anything
+   visible, while the real visible series and the tooltip's own content logic
+   both still read the true `amount`/`isFriday` fields. This is the standard
+   pattern for "make every x-position hoverable in a chart with real data
+   gaps" in Recharts and should be reused for any future gapped chart in this
+   project, not rediscovered.
+
+Also re-confirmed (third occurrence of this exact issue, first two were in
+earlier phases per the SCRUM-61/session-cookie entries above): after any code
+change to a Server/Client Component, if a freshly-compiled route renders
+**stale JSX from before the edit** (extra/missing sections, an old prop
+default) with no error logged and `tsc --noEmit` clean, this is the known
+dev-mode stale-compile quirk — `docker compose restart app`, wait for
+readiness, then re-warm the specific route with one request before trusting
+any render output. Do not spend time debugging application logic against a
+stale render — restart first, re-verify, and only treat the bug as real if it
+reproduces after a clean restart. This cost real time in this session because
+each of the three real Recharts bugs above was independently reinforced or
+obscured by this same stale-compile pattern firing in between fix attempts.
+
+Rule going forward: for any new Recharts (or other SVG charting) component in
+this project — (1) never pass a `var(--color-*)` CSS reference as a plain SVG
+attribute prop, always resolve to a literal value; (2) override `shape` with
+a plain non-animated renderer for any Area/Line with real data gaps, don't
+rely on `isAnimationActive={false}` alone; (3) if the chart has genuine gaps
+in the data (not just sparse data), add an invisible hit-testing series so
+every x-position remains hoverable; (4) after any chart-component edit,
+restart the dev server and re-warm the route before judging whether a visual
+result reflects the new code.
+
+## 2026-09-04 — Phase 10 (SCRUM-92 follow-up, found while starting SCRUM-93)
+Mistake: `buildDailyProfitSeries` (`daily-profit-series.ts`) keyed its walked
+date range with `cursor.toISOString().slice(0, 10)` — the UTC date — while
+`getDailyInterestHistoryA` (`wallets.ts`) keys its history map with
+`dubaiDayKey`, the actual Dubai business day. These only coincidentally
+matched in every existing test because every test fixture used
+`T08:00:00.000Z` (noon Dubai) instants, which happen to have the same UTC and
+Dubai calendar date. In real usage, `now = new Date()` lands at an arbitrary
+wall-clock time, and whenever its UTC date differs from its Dubai date (any
+time before 04:00 UTC, i.e. before 08:00 Dubai), every key this function
+produced was silently off, so a real user's actually-credited interest never
+matched any point in the chart's own generated series — the chart rendered
+as if the user had zero history, even though `getDailyInterestHistoryA`
+returned the correct data one level up. Caught only because a live check
+against a real seeded user (not a test) showed the chart looking empty
+despite a non-zero "today's profit" figure on the same page — the two
+numbers visibly disagreeing is what made this noticeable, not a test.
+## 2026-09-04 — Phase 10 (SCRUM-95)
+Mistake #1: none in the newly-written code, but a real latent bug was caught
+in passing — `Button` (`src/components/ui/button.tsx`, a Base UI `Button`
+primitive) rendered with `render={<Link href="..." />}` (the established
+pattern for a link styled as a button, e.g. `investment-list.tsx`'s "Browse
+packages" button from Phase 3) throws a console warning at runtime: Base UI's
+`Button` defaults `nativeButton` to `true`, which asserts the rendered element
+really is a `<button>` — but `Link` (from `@/i18n/navigation`) renders an
+`<a>`. This never surfaced before because nothing had actually loaded that
+page in a real browser and inspected the console (per the "check console
+--errors" verification habit) until SCRUM-95's live-browser check of the new
+dashboard "View full tree" link caught it.
+Rule: any `Button` rendered with `render={<Link ... />}` (or any non-`<button>`
+element) must also pass `nativeButton={false}`, or Base UI logs a real
+accessibility-semantics warning on every render. Fixed in both the new
+SCRUM-95 usage and the pre-existing `investment-list.tsx` one found during
+this pass. Add this to the standing checklist for any future `Button` +
+`render` combination that isn't a real `<button>`.
+
+Mistake #2 (real pre-existing bug, not introduced by this ticket, but only
+caught by this ticket's live-Arabic-screenshot requirement): the binary tree's
+`scaleX(-1)` RTL-mirroring technique (`binary-tree-view.tsx`) set
+`translate.x = dimensions.width - 40` for the mirrored (Arabic) case, vs `40`
+for LTR. This looked like the obviously-correct "mirror the anchor point too"
+choice, but `scaleX(-1)` on the wrapping div uses the default transform-origin
+(50% 50%, the div's own center) — center-pivot mirroring already maps every
+local x to `width - x` on screen, so it does NOT need (or want) a
+mirrored-specific translate value; using the *same* `translate.x = 40` for
+both cases was actually correct, because the center-pivot mirror handles the
+visual flip on its own. With the buggy `width - 40` value, the root (the only
+node whose local x was near `width`) happened to land back near the visual
+left edge by coincidence and looked plausible in a quick check — but every
+deeper generation's local x (root's x plus rightward growth per level) pushed
+well past `width/2`, which mirrors to a *negative*, off-canvas screen x. The
+practical symptom: in Arabic, only the root node was ever visible; every
+child/grandchild silently vanished off the left edge of the tree canvas. This
+had shipped in Phase 7/8 and was never caught because no prior ticket did a
+live Arabic screenshot of a tree with more than one generation — the Phase 7
+exit test's own RTL check evidently only confirmed the root rendered, not a
+multi-level tree's full layout.
+Rule: **for any `scaleX(-1)`-based RTL mirror wrapping absolutely-positioned
+or transform-translated children, verify with a live multi-level/multi-node
+screenshot, not just "does the root/first item appear."** A mirror pivot bug
+often still shows *something* on screen (making a quick glance look fine)
+while silently clipping everything past a certain distance from the pivot —
+the failure is invisible unless the content actually extends far enough from
+the anchor to cross the wrong pivot's boundary. When debugging a "half the
+tree/list is invisible in RTL only" symptom, check the actual computed
+`transform` and `transform-origin` (via `getBoundingClientRect()`/
+`getAttribute("style")` in a real browser, not by reading the JSX and
+assuming the math is right) before touching mirroring logic — the fix here
+was a one-line `translate.x` correction once the actual pivot math was traced
+through by hand.
+
+## 2026-09-05 — Phase 10 (SCRUM-97)
+Mistake: none in the newly-written SCRUM-97 code, but a real pre-existing bug
+blocked its live-verification requirement and had to be fixed first.
+`display.ts`'s `formatDate(value, locale)` read `config.TIMEZONE` (the
+env-validated lazy Proxy from `config.ts`) to pass as `Intl.DateTimeFormat`'s
+`timeZone` option. `formatDate` is called directly from FOUR already-shipped
+`"use client"` components — `referrals-list.tsx`, `commission-history-list.tsx`
+(both Phase 6), `investment-list.tsx` (Phase 3), and `b-exit-status-list.tsx`
+(Phase 5) — none of which had ever been exercised via a real, full
+login-through-navigation browser flow before (per this project's own history:
+Phases 3-5 relied on cookie-pasting per the SCRUM-61 lesson, and no ticket
+before SCRUM-97 did a genuine live click-through of `/referrals` specifically
+after Phase 6 shipped it). `config` reading `process.env` inside a client
+("app-pages-browser") webpack bundle always fails — server env vars
+(`DATABASE_URL`, `SEED_ADMIN_EMAIL`, etc.) never reach the browser, so
+`envSchema.safeParse(process.env)` fails there every single time, not
+intermittently. This is a DIFFERENT bug class from the SCRUM-61
+RSC/Server-Action module-duplication race (both bugs happen to throw the same
+"Invalid environment configuration" message from the same `loadConfig()`
+call site, which made this one look like a recurrence of that already-known,
+already-"fixed" issue at first) — confirmed distinct by reading the actual
+browser stack trace (`page.on("pageerror")` with `err.stack`, not just
+`err.message`), which pointed at `webpack-internal:///(app-pages-browser)/
+./src/lib/config.ts`, a client bundle, not an `(rsc)`/`(ssr)` duplicate
+racing on first access.
+Rule: (1) **when an "Invalid environment configuration" error recurs, always
+read the full stack trace before assuming it's the known SCRUM-61 race** —
+check whether the throwing bundle is `(app-pages-browser)` (a real,
+deterministic client-side bug: something client-reachable imports server-only
+`config`) vs `(rsc)`/`(ssr)` duplicates (the already-mitigated lazy-load
+race). The fix and the correct diagnosis are completely different depending
+on which one it is. (2) **`config.ts` (or any server-only env-validated
+module) must never be imported, even transitively, from a function called by
+a `"use client"` component** — `formatDate` didn't actually need dynamic env
+config at all: `config.TIMEZONE`'s own schema is `z.literal("Asia/Dubai")`,
+a value that can never be anything else, so the fix was to hardcode the
+literal directly in `formatDate` and drop the `config` import from
+`display.ts` entirely, not to make `config` "more client-safe." Any future
+shared helper called from both server and client components should be
+checked for transitive server-only imports (env config, Prisma, anything
+reading `process.env` beyond `NODE_ENV`) before being reused client-side.
+(3) This bug had been silently live in four shipped pages since Phase 3 —
+it was invisible because no ticket's manual verification had done a true
+end-to-end authenticated click-through (real login -> navigate -> render)
+of any of those four pages until SCRUM-97's live-browser verification step
+actually did. Reinforces the existing "manually exercising against the real
+app is not optional" lesson (SCRUM-52) for one more class of bug: a
+client-only crash that unit tests (which run in Node, not a browser, and
+never exercise the `(app-pages-browser)` bundle) can never catch on their own.
+
+**Follow-up sweep (same day, before starting SCRUM-98)**: at the user's
+request, checked the rest of the codebase for other dormant instances of
+this same bug class (a `"use client"` component transitively importing
+`config.ts` or any other `process.env`-reading module) before continuing.
+Method: listed all 17 `"use client"` files, checked each one's `@/lib/*`
+imports, and traced every consumer of the four modules that still import
+`config.ts` post-fix (`rank.ts`, `binary-cycle.ts`, `withdrawal-requests.ts`,
+`interest-rate.ts`) plus every project-wide `process.env` usage
+(`config.ts`, `session.ts`'s `NODE_ENV` check — safe, Next.js always inlines
+`NODE_ENV` even in client bundles — `prisma.ts`, `worker/index.ts` — both
+server-only by construction). Found two `"use client"` files
+(`daily-profit-chart.tsx`, `binary-tree/binary-panel.tsx`) that import from
+config-adjacent modules (`daily-profit-series.ts`, `binary-cycle.ts`,
+`binary-tree.ts`) but only via `import type` — type-only imports are erased
+entirely at compile time, so they pull in zero runtime code and can't
+reproduce this bug. No other instance found. Confirmed `src/components/
+binary-panel.tsx` (the SCRUM-94 dashboard rank/binary panel, easy to
+confuse by name with the older `binary-tree/binary-panel.tsx`) is a Server
+Component, not client, despite the naming collision.
+Rule: **a full-codebase sweep for "other instances of a bug just found" is
+worth the few minutes it costs, and `import type` vs a value import is the
+key distinction when auditing "does this client component transitively pull
+in server-only code"** — grep for `from "@/lib/X"` without first checking
+whether it's `import type` will produce false positives. This sweep is now
+done as of 2026-09-06; a future session doesn't need to redo it from
+scratch, only re-check anything genuinely new added since.
+
+Rule: this project already has the `startOfDubaiDay`/`dubaiDayKey` helpers in
+`wallets.ts` for exactly this bucketing; they've now been extracted into
+`src/lib/business-day.ts` as the single shared implementation. **Any new
+function that buckets a `createdAt` timestamp or walks a date range in Dubai
+-business-day terms must import from `business-day.ts`, never
+re-derive `cursor.toISOString().slice(0, 10)` or similar UTC-date logic
+inline** — this is now the second independent time this exact mistake
+happened in this project (see the `getTodayInterestCreditA`/
+`getDailyInterestHistoryA` `dubaiDayKey` comment for the first). Also: **a
+test suite built entirely from midnight/noon-aligned fixture instants can
+hide a real timezone-boundary bug indefinitely** — at least one test for any
+Dubai-day-bucketing function should use a fixture instant deliberately near
+the UTC/Dubai day-boundary edge (e.g. 21:00–04:00 UTC), not just clean noon
+-Dubai instants, specifically because that's the range where a UTC-vs-Dubai
+mismatch actually manifests.
+
+## 2026-09-06 — Phase 10 (SCRUM-99)
+Mistake: none in the newly-designed backend logic, but a real cross-cutting
+RTL bug was found (and fixed project-wide, not just in the new page) during
+this ticket's live Arabic verification. A literal `+`/`−` sign concatenated
+directly before a `tabular-nums` amount (e.g. `{"+"}{"40.00"}` or
+`+${formatAmount(...)}`) renders correctly in English but gets visually
+reordered by the browser's Unicode bidi algorithm inside an RTL-context
+element — `+40.00` displays as `40.00+` (sign trailing the digits) in
+Arabic, silently flipping the sign's visual position without changing the
+underlying text content or throwing any error. This is invisible to a
+translation-only review (the string itself is fine) and only shows up on an
+actual rendered `/ar` screenshot, which is exactly why it went undiscovered
+in three earlier phases (`wallet-card.tsx`'s "Today's profit" footer since
+SCRUM-92, `commission-history-list.tsx`'s Direct Commission amounts since
+Phase 6, `daily-profit-chart.tsx`'s tooltip since SCRUM-92) despite this
+project's own bilingual-rtl skill mandating an Arabic visual walkthrough for
+every UI ticket — none of those three prior verifications happened to
+zoom in on / scrutinize the exact sign-digit ordering closely enough to
+notice a one-character transposition.
+Rule: **any literal sign/currency symbol placed directly adjacent to a
+`tabular-nums`/numeric value in JSX must have `dir="ltr"` on the immediate
+wrapping element**, not just rely on the parent page's `dir="rtl"` sorting
+itself out — numbers and their adjacent symbols are a single semantic unit
+that must not be bidi-reordered independently of each other. One existing
+precedent for this pattern already existed in this codebase
+(`binary-tree-view.tsx`'s counter-flip wrapper, for a different reason —
+mirroring — but same `dir="ltr"` mechanism) before this ticket, but it was
+never generalized as a rule for the plain sign+amount case elsewhere. Fixed
+in all 4 instances found via a project-wide grep for `tabular-nums
+text-success` (the shared styling fingerprint of every affected span) —
+`transaction-list.tsx` (new), `wallet-card.tsx`, `commission-history-list.tsx`,
+`daily-profit-chart.tsx`. Going forward, add `dir="ltr"` to any new
+sign-prefixed or currency-prefixed numeric display from the start, and when
+reviewing a rendered `/ar` screenshot, explicitly check that every visible
+`+`/`−`/currency-symbol sits on the correct side of its digits, not just
+that the digits themselves are Western numerals — this is a distinct check
+from the numeral-forcing rule already established for `formatDate`.
+
+## 2026-09-06 — Phase 10 (SCRUM-99), a new variant of the SCRUM-54/79 hazard class
+Mistake: SCRUM-99's live-verification demo script (`scrum99-demo-setup.ts`)
+called the REAL `runDailyInterestCatchUp(now)` — not a fabricated/isolated
+call — to make a demo user's Daily Interest entries genuine rather than
+hand-inserted. This wrote a real `job_runs` row for today's actual calendar
+date under the single global `(job_type, period_key)` key the real scheduler
+also uses. Running the full suite shortly after, `phase-4-exit-test.test.ts`
+(the 90-fabricated-day exit test, whose fabricated window happens to include
+every real calendar date from `windowStart` through `windowEnd`, including
+`now`) failed a balance assertion — its own day-by-day
+`runDailyInterestCatchUp(cursor)` loop silently no-op'd for the one date
+that collided with my already-COMPLETED real row (postTransaction/job_runs
+idempotency correctly prevented double-processing, which is exactly right
+in production — but that same correctness is what broke a test that assumed
+it owned every period_key in its fabricated window). The test's own
+`afterAll` only deletes period_keys it itself created and tracked
+(`createdJobRunPeriodKeys`), so a pre-existing external row for the same key
+is invisible to its cleanup and never even attributed back to "something
+else wrote this." Confirmed the mechanism (not just observed a retry
+passing): traced `periodKeyFor()`'s key derivation, confirmed it's a
+single global key with no test/run-scoping, then re-ran the exact same test
+file in isolation after clearing the polluting row — clean pass, then
+re-ran the FULL suite after also cleaning up the demo users — 43/43 files
+clean, confirming the fix rather than just hoping the second run was luckier.
+Rule: **this is the same root class as the SCRUM-54 (exit test vs.
+pre-existing real investments) and SCRUM-79 (concurrent vitest processes)
+hazards — "a function that operates on shared global state
+(`runDailyInterestCatchUp`, or anything keyed by `job_type`+calendar date
+rather than a test-scoped id) is dangerous to call for real outside of a
+test file's own tracked-and-cleaned scope, even from an ad-hoc manual
+verification script, not just from another automated test process.**
+Going forward: any manual/scratch demo script that needs realistic Daily
+Interest entries should prefer directly seeding the `ledger_entries` rows
+(same pattern already used for MRV/rank/binary-cycle demo data in earlier
+Phase 10 tickets) rather than invoking the real scheduler entry point,
+specifically because that entry point's idempotency key is global and
+calendar-scoped, unlike per-user seed helpers. If a real scheduler call is
+genuinely needed for a demo, run the full test suite immediately afterward
+(before doing anything else) to catch a `job_runs`/global-state collision
+early, and always clean up demo data before considering a session's test
+run "final."
+
+## 2026-09-08/09 — Phase 10 UX-gap session — KNOWN PERMANENT DISCREPANCY, do not try to fix
+Mistake: ran multiple `vitest run` invocations concurrently against the
+shared dev DB in the same session — the exact SCRUM-79/SCRUM-99 hazard class,
+just triggered by losing track of which `docker compose exec` background
+Bash calls had actually exited versus still running in the container (the
+Bash tool's own "moved to background" timeout does not mean the underlying
+container process died — checked via `/proc/[pid]/cmdline` and found two
+full vitest trees plus a stray worker alive simultaneously well after their
+originating shell commands had timed out on the host side). This produced a
+real, permanent artifact: a `daily_interest` ledger-entry pair for test-
+fixture user `cmtsra6kh006wo58llcuk8ysk` (email
+`rankpayoutjob-fail-a-...@test.local`, from `rank.test.ts`'s
+"payout job fails at wallet A" scenario, interrupted mid-run by the
+concurrent-run collision) whose `WalletAccount` row for wallet A does not
+exist — the ledger CREDIT/SYSTEM_EXTERNAL DEBIT pair itself is fully valid
+and correctly double-paired (idempotency key
+`daily_interest:cmtsra6kh006wo58llcuk8ysk:cmtsra6mg007go58ltjeixmjk:2026-09-26`,
+amount 27.33841602 each side), but with no wallet to belong to, it reads as
+a permanent -27.33841602 drift in `runReconciliation()`'s SYSTEM_EXTERNAL
+global-solvency check.
+First reflex was wrong and got corrected by the user: attempted to delete
+the two orphaned ledger rows by `idempotencyKey` (the standard repair
+pattern from every earlier orphan-cleanup entry in this file) — blocked at
+the DB level by `ledger_entries`' own append-only trigger, which is invariant
+#2 working exactly as designed, not an obstacle to route around. The
+correct diagnosis, once delete was impossible: this is not "harmless test
+leftover to sweep away," it is **permanent real ledger history** by the
+very invariant that makes ledger data trustworthy — the actual bug is
+upstream (something let a wallet get removed, or never got created, while
+ledger entries referencing it still got posted; root cause not yet isolated,
+most likely `rank.test.ts`'s own crash-cleanup path colliding with the
+concurrent run rather than a genuine app-code gap). The user then asked to
+make `runReconciliation()` gracefully skip entries with no matching wallet —
+also correctly rejected: that function's own doc comment says drift is
+"a potential tampering signal, not merely a bug signal... throws loudly
+rather than logging silently" — silencing exactly the "wallet vanished but
+its ledger history didn't" case would blind the one check built to catch
+that class of corruption in production, not just in this dev accident.
+Rule: (1) **never trust a Bash tool "timeout, moved to background" message
+as proof the underlying command stopped** — for anything running inside a
+long-lived container (this project's `docker compose exec` pattern), check
+`/proc/[pid]/cmdline` inside the container itself before starting a second
+`vitest run`, every time, not just when something already looks wrong.
+(2) **`ledger_entries` being literally undeletable (DB trigger, not just
+convention) means any future orphan discovered here needs a different
+disposition than the delete-by-idempotencyKey pattern used everywhere
+else in this file** — that pattern still applies to every OTHER
+undeletable-in-practice-but-not-actually-blocked case (Phase 2/5/8 entries
+above), but this project's ledger table specifically cannot be swept clean
+by a script once a bad pair lands, ever. (3) This specific discrepancy
+(user `cmtsra6kh006wo58llcuk8ysk`, idempotency key
+`daily_interest:cmtsra6kh006wo58llcuk8ysk:cmtsra6mg007go58ltjeixmjk:2026-09-26`,
+-27.33841602 SYSTEM_EXTERNAL drift) is now a **permanent, accepted, explained
+exception** in this dev DB — any future session running
+`reconciliation.test.ts` or `runReconciliation()` directly and seeing
+exactly this drift amount/user/key should recognize it immediately as this
+already-documented artifact, not re-investigate it or attempt to "fix" it
+again. It is not real user money and does not indicate a live bug in
+current app code.

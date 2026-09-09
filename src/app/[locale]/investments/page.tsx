@@ -1,12 +1,12 @@
 import { getTranslations, getLocale } from "next-intl/server";
-import { requireSession } from "@/lib/route-guard";
+import { requireSessionOrRedirect } from "@/lib/page-guard";
 import { listInvestmentsForUser } from "@/lib/investments";
 import { InvestmentList } from "./investment-list";
 
 export default async function InvestmentsPage() {
   const t = await getTranslations("Investments");
   const locale = await getLocale();
-  const user = await requireSession(new Date());
+  const user = await requireSessionOrRedirect(new Date());
 
   const investments = await listInvestmentsForUser(user.id);
 

@@ -86,14 +86,14 @@ export function BExitForm({
 
   return (
     <>
-      <Card className="border-border/60 shadow-sm">
+      <Card className="border-border/60 shadow-sm transition-shadow hover:shadow-md hover:shadow-black/20">
         <CardHeader className="pb-2">
           <CardTitle className="text-base font-medium">{t("bExitFormTitle")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between gap-2 text-sm">
             <span className="text-muted-foreground">{t("walletBBalanceLabel")}</span>
-            <span className="font-medium tabular-nums">{walletBBalance}</span>
+            <span className="font-heading font-medium tabular-nums">{walletBBalance}</span>
           </div>
 
           {disabled ? (
@@ -138,7 +138,7 @@ export function BExitForm({
           <DialogHeader>
             {success ? (
               <DialogTitle className="flex flex-row items-center gap-2">
-                <CheckCircle2 className="size-5 shrink-0 text-emerald-600 dark:text-emerald-500" aria-hidden="true" />
+                <CheckCircle2 className="size-5 shrink-0 text-success" aria-hidden="true" />
                 <span>{t("bExitSuccessTitle")}</span>
               </DialogTitle>
             ) : (

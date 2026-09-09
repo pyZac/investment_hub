@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { prisma } from "./prisma";
-import { hashPassword } from "./password";
-import { login } from "./auth";
+import { hashPassword, verifyPassword } from "./password";
+import { login, changePassword } from "./auth";
 import { validateAndTouchSession } from "./session";
 
 const createdUserIds: string[] = [];
@@ -69,6 +69,34 @@ describe("login", () => {
     await expect(
       login({ email: user.email, password: "correct-password" }, new Date(), uniqueIp()),
     ).rejects.toThrow(/invalid email or password/i);
+  });
+});
+
+describe("changePassword", () => {
+  it("changes the password when the current password is correct", async () => {
+    const user = await makeUser();
+    await changePassword(user.id, { currentPassword: "correct-password", newPassword: "new-password-123" });
+
+    const updated = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    await expect(verifyPassword(updated.passwordHash, "new-password-123")).resolves.toBe(true);
+    await expect(verifyPassword(updated.passwordHash, "correct-password")).resolves.toBe(false);
+  });
+
+  it("rejects an incorrect current password and leaves the password unchanged", async () => {
+    const user = await makeUser();
+    await expect(
+      changePassword(user.id, { currentPassword: "wrong-password", newPassword: "new-password-123" }),
+    ).rejects.toThrow(/current password is incorrect/i);
+
+    const unchanged = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    await expect(verifyPassword(unchanged.passwordHash, "correct-password")).resolves.toBe(true);
+  });
+
+  it("rejects a new password shorter than 8 characters", async () => {
+    const user = await makeUser();
+    await expect(
+      changePassword(user.id, { currentPassword: "correct-password", newPassword: "short" }),
+    ).rejects.toThrow();
   });
 });
 

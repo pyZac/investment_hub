@@ -17,10 +17,10 @@ type StatusListRequest = {
   adminComment: string | null;
 };
 
-function statusBadgeVariant(status: WithdrawalRequestStatus): "default" | "secondary" | "destructive" {
-  if (status === "APPROVED") return "default";
+function statusBadgeVariant(status: WithdrawalRequestStatus): "success" | "warning" | "destructive" {
+  if (status === "APPROVED") return "success";
   if (status === "REJECTED") return "destructive";
-  return "secondary";
+  return "warning";
 }
 
 export function BExitStatusList({ requests, locale }: { requests: StatusListRequest[]; locale: string }) {
@@ -28,8 +28,10 @@ export function BExitStatusList({ requests, locale }: { requests: StatusListRequ
 
   if (requests.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border py-14 text-center">
-        <History className="size-10 text-muted-foreground/60" aria-hidden="true" />
+      <div className="flex flex-col items-center gap-3 py-14 text-center">
+        <div className="flex size-12 items-center justify-center rounded-full bg-muted/60 text-muted-foreground">
+          <History className="size-6" aria-hidden="true" />
+        </div>
         <p className="max-w-sm text-sm text-muted-foreground">{t("bExitEmptyState")}</p>
       </div>
     );
@@ -41,7 +43,7 @@ export function BExitStatusList({ requests, locale }: { requests: StatusListRequ
         <Card key={request.id} className="border-border/60 shadow-sm">
           <CardContent className="space-y-2 py-4">
             <div className="flex flex-row items-center justify-between gap-2">
-              <span className="text-lg font-semibold tabular-nums">{request.amount}</span>
+              <span className="font-heading text-lg font-semibold tabular-nums">{request.amount}</span>
               <Badge variant={statusBadgeVariant(request.status)}>
                 {request.status === "PENDING" && t("statusPending")}
                 {request.status === "APPROVED" && t("statusApproved")}

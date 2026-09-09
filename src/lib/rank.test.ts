@@ -10,6 +10,7 @@ import {
   editRankConfig,
   createRankConfig,
   chooseRankReward,
+  getRankProgressForUser,
 } from "./rank";
 import { cleanupLedgerEntriesForUsers } from "./test-helpers";
 
@@ -389,6 +390,102 @@ describe("evaluateRankForUser", () => {
     const anyAward = await prisma.rankAward.findFirst({ where: { userId: sponsor.id } });
     expect(anyAward).toBeNull();
   });
+});
+
+describe("getRankProgressForUser", () => {
+  it("an unranked user (no awards yet) has currentRank null and Investor as nextRank", async () => {
+    const forDate = new Date("2026-09-15T10:00:00.000Z");
+    const user = await makeUser("progress-unranked");
+    await giveActiveInvestment(user.id, forDate);
+
+    const progress = await getRankProgressForUser(user.id, forDate);
+    expect(progress.currentRank).toBeNull();
+    expect(progress.nextRank).not.toBeNull();
+    expect(progress.nextRank!.name).toBe("Investor");
+    expect(progress.nextRank!.directReferralsRequired).toBe(2);
+    expect(progress.nextRank!.mrvRequired.equals("25000")).toBe(true);
+  });
+
+  it("reports live current-month MRV and qualified referral count regardless of rank", async () => {
+    const forDate = new Date("2026-09-15T10:00:00.000Z");
+    const user = await makeUser("progress-live-numbers");
+    await giveActiveInvestment(user.id, forDate);
+    const referral = await makeSponsoredUser(user.id, "progress-live-numbers-ref");
+    await giveActiveInvestment(referral.id, forDate);
+    await seedMrv(user.id, "2026-09", "12345");
+
+    const progress = await getRankProgressForUser(user.id, forDate);
+    expect(progress.currentMrv.equals("12345")).toBe(true);
+    expect(progress.currentReferralCount).toBe(1);
+  });
+
+  it("after being granted Partner, currentRank is Partner and nextRank is Executive", async () => {
+    const forDate = new Date("2026-09-15T10:00:00.000Z");
+    const sponsor = await makeUser("progress-partner");
+    await giveActiveInvestment(sponsor.id, forDate);
+    for (let i = 0; i < 4; i++) {
+      const referral = await makeSponsoredUser(sponsor.id, `progress-partner-ref-${i}`);
+      await giveActiveInvestment(referral.id, forDate);
+    }
+    await seedMrv(sponsor.id, "2026-09", "100000");
+    await evaluateRankForUser(sponsor.id, "2026-09", forDate);
+
+    const progress = await getRankProgressForUser(sponsor.id, forDate);
+    expect(progress.currentRank).toEqual({ name: "Partner", rankOrder: 2 });
+    expect(progress.nextRank!.name).toBe("Executive");
+    expect(progress.nextRank!.directReferralsRequired).toBe(6);
+    expect(progress.nextRank!.mrvRequired.equals("500000")).toBe(true);
+  });
+
+  it("a user granted a rank without ever being granted every rank below it still reports the highest as current (highest-only-is-paid means gaps are normal)", async () => {
+    // Mirrors evaluateRankForUser's own "crossing multiple thresholds grants
+    // only the highest" behavior — Investor is forfeited, never awarded, so
+    // currentRank must still resolve to Partner (the one actually awarded),
+    // not be confused by the gap.
+    const forDate = new Date("2026-09-15T10:00:00.000Z");
+    const sponsor = await makeUser("progress-gap");
+    await giveActiveInvestment(sponsor.id, forDate);
+    for (let i = 0; i < 4; i++) {
+      const referral = await makeSponsoredUser(sponsor.id, `progress-gap-ref-${i}`);
+      await giveActiveInvestment(referral.id, forDate);
+    }
+    await seedMrv(sponsor.id, "2026-09", "100000");
+    const result = await evaluateRankForUser(sponsor.id, "2026-09", forDate);
+    expect(result.rank).toBe("Partner");
+
+    const investorAward = await prisma.rankAward.findUnique({
+      where: { userId_rank: { userId: sponsor.id, rank: "Investor" } },
+    });
+    expect(investorAward).toBeNull();
+
+    const progress = await getRankProgressForUser(sponsor.id, forDate);
+    expect(progress.currentRank).toEqual({ name: "Partner", rankOrder: 2 });
+  });
+
+  it(
+    "a user at OG (the top rank) has currentRank OG and nextRank null — no divide-by-zero/broken state",
+    async () => {
+      const forDate = new Date("2026-09-15T10:00:00.000Z");
+      const sponsor = await makeUser("progress-og");
+      await giveActiveInvestment(sponsor.id, forDate);
+      // OG requires 20 qualified referrals — real registration + purchase
+      // (argon2 hashing per referral) is unusually heavy for a unit test,
+      // hence the longer per-test timeout below rather than raising the
+      // suite's global testTimeout for one outlier.
+      for (let i = 0; i < 20; i++) {
+        const referral = await makeSponsoredUser(sponsor.id, `progress-og-ref-${i}`);
+        await giveActiveInvestment(referral.id, forDate);
+      }
+      await seedMrv(sponsor.id, "2026-09", "100000000");
+      const result = await evaluateRankForUser(sponsor.id, "2026-09", forDate);
+      expect(result.rank).toBe("OG");
+
+      const progress = await getRankProgressForUser(sponsor.id, forDate);
+      expect(progress.currentRank).toEqual({ name: "OG", rankOrder: 8 });
+      expect(progress.nextRank).toBeNull();
+    },
+    45000,
+  );
 });
 
 describe("payQueuedRankRewards", () => {
