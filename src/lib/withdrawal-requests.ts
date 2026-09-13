@@ -60,6 +60,76 @@ export async function listWithdrawalRequestsForUser(userId: string) {
   });
 }
 
+/**
+ * Every PENDING Wallet B exit request across all users, oldest first
+ * (FIFO — first submitted, first reviewed), for the admin approval queue.
+ * Includes the requester's name and their CURRENT Wallet B balance (a live
+ * read, not the balance at request time) so the admin can see whether
+ * there's still enough to actually approve. WITHDRAWAL_APPROVAL-gated
+ * (main admin bypasses) — this is an admin-facing, all-users query by
+ * design, not scoped by invariant #9's self-ownership rule.
+ */
+export async function listPendingWithdrawalRequests(actingAdminId: string) {
+  await requireWithdrawalApproval(actingAdminId);
+
+  const requests = await prisma.withdrawalRequest.findMany({
+    where: { status: "PENDING" },
+    orderBy: { requestedAt: "asc" },
+    include: { user: { select: { id: true, name: true, email: true } } },
+  });
+
+  if (requests.length === 0) {
+    return [];
+  }
+
+  const userIds = [...new Set(requests.map((r) => r.userId))];
+  const walletBRows = await prisma.walletAccount.findMany({
+    where: { userId: { in: userIds }, type: "B" },
+  });
+  const walletBByUser = new Map(walletBRows.map((w) => [w.userId, w.balance]));
+
+  return requests.map((r) => ({
+    id: r.id,
+    userId: r.userId,
+    userName: r.user.name,
+    userEmail: r.user.email,
+    amount: r.amount,
+    requestedAt: r.requestedAt,
+    walletBBalance: walletBByUser.get(r.userId) ?? new Prisma.Decimal(0),
+  }));
+}
+
+/**
+ * Past decisions (APPROVED/REJECTED), newest first — the admin panel's
+ * history view. Includes who decided it and the reason/comment given.
+ * WITHDRAWAL_APPROVAL-gated (main admin bypasses), same reasoning as
+ * listPendingWithdrawalRequests.
+ */
+export async function listDecidedWithdrawalRequests(actingAdminId: string) {
+  await requireWithdrawalApproval(actingAdminId);
+
+  const requests = await prisma.withdrawalRequest.findMany({
+    where: { status: { in: ["APPROVED", "REJECTED"] } },
+    orderBy: { decidedAt: "desc" },
+    include: {
+      user: { select: { name: true, email: true } },
+      decidedByAdmin: { select: { name: true, email: true } },
+    },
+  });
+
+  return requests.map((r) => ({
+    id: r.id,
+    userName: r.user.name,
+    userEmail: r.user.email,
+    amount: r.amount,
+    status: r.status,
+    requestedAt: r.requestedAt,
+    decidedAt: r.decidedAt,
+    decidedByAdminName: r.decidedByAdmin?.name ?? null,
+    adminComment: r.adminComment,
+  }));
+}
+
 async function requireWithdrawalApproval(actingAdminId: string) {
   const admin = await prisma.user.findUnique({ where: { id: actingAdminId } });
   if (!admin || admin.role !== "ADMIN") {
@@ -87,8 +157,19 @@ async function requireWithdrawalApproval(actingAdminId: string) {
  * the request APPROVED. May happen on any day, not just Friday — the
  * Friday-only rule applies to the user's submission, not the admin's
  * decision.
+ *
+ * `adminComment` is optional here (unlike rejectWithdrawalRequest, where a
+ * comment is always required) — the admin panel (SCRUM-105) treats a reason
+ * as mandatory at the UI/action layer for both approve and reject, but this
+ * library function stays permissive so existing callers/tests that never
+ * passed one keep working unchanged, with adminComment simply staying null.
  */
-export async function approveWithdrawalRequest(actingAdminId: string, requestId: string, decidedAt: Date) {
+export async function approveWithdrawalRequest(
+  actingAdminId: string,
+  requestId: string,
+  decidedAt: Date,
+  adminComment?: string,
+) {
   await requireWithdrawalApproval(actingAdminId);
 
   const request = await prisma.withdrawalRequest.findUniqueOrThrow({ where: { id: requestId } });
@@ -135,6 +216,7 @@ export async function approveWithdrawalRequest(actingAdminId: string, requestId:
         status: "APPROVED",
         decidedAt,
         decidedByAdminId: actingAdminId,
+        ...(adminComment ? { adminComment } : {}),
       },
     });
 

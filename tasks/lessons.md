@@ -1222,3 +1222,306 @@ exactly this drift amount/user/key should recognize it immediately as this
 already-documented artifact, not re-investigate it or attempt to "fix" it
 again. It is not real user money and does not indicate a live bug in
 current app code.
+
+## 2026-09-11 — Phase 11 (SCRUM-108)
+Mistake: `getCurrentRate()` (new admin-facing function for the interest
+-rate management screen) queried `interest_rate_config` with
+`where: { effectiveTo: null }` to find "the current rate" — this looks
+correct and matches how `dailyRate()`'s own storage convention is
+described ("the open-ended row is the active one"), but is wrong the
+moment a FUTURE-dated rate change has been scheduled. `setInterestRate`
+closes the old row's `effectiveTo` to the NEW row's `effectiveFrom`
+(so the old row's `effectiveTo` is no longer null) and creates the new
+row with `effectiveTo: null` — but the new row's `effectiveFrom` can be
+weeks away. For that whole window, `effectiveTo: null` matches the NEW
+(not-yet-active) row, not the OLD (still genuinely in effect) one, so
+`getCurrentRate()` would show an admin a rate that hasn't taken effect
+yet as if it were live today. Caught only by manual end-to-end
+verification (create a future-dated rate, then check what "current"
+reports) — the unit tests I wrote first didn't catch it because they
+tested `setInterestRate`'s own row mutations directly, never called
+`getCurrentRate()` after scheduling a future change.
+Rule: **"the row with effectiveTo: null" and "the row active right now"
+are NOT the same claim** for any table using this open-ended-row
+versioning pattern, the instant the table supports scheduling a change
+for a future date (not just "effective immediately"). Any "get current
+X" query against such a table must use the same date-bounded lookup as
+the table's own read-side consumer (here, `dailyRate()`'s
+`effectiveFrom: { lte: forDate }, OR: [{effectiveTo: null}, {effectiveTo:
+{gt: forDate}}]`), never the shortcut `effectiveTo: null` alone — and
+must take `forDate` as an explicit parameter (invariant #4) rather than
+implicitly meaning "now," so it can be tested at a specific instant
+before/after a scheduled change lands. Added a regression test in
+`rate-config.test.ts` that schedules a future rate then asserts
+`getCurrentRate(admin, now)` still returns the OLD row and
+`getCurrentRate(admin, future)` returns the NEW one. Any future
+versioned-config screen with admin-schedulable future-dated changes
+(commission config, rank config, if they ever get the same "effective
+from a future date" capability) should apply this same rule from the
+start, not discover it via manual testing.
+
+## 2026-09-11 — Phase 11 (SCRUM-109)
+Mistake: none in shipped code, but the ticket's own premise was wrong in
+three ways, all caught by reading the real schema/engine code before
+writing anything, per CLAUDE.md's "stop and ask rather than guessing" rule
+— worth logging since a ticket's stated premise isn't automatically ground
+truth. (1) The ticket said to reuse "existing commission_config versioned
+write functions from Phase 5" — none existed; Phase 5/6 only ever wrote
+this table via raw `prisma.commissionConfig.update/create/delete` inside
+test files, which is exactly the pattern invariant #2/#6 forbid for real
+admin code. Built `commission-config.ts` from scratch this ticket, mirroring
+`rate-config.ts`'s SCRUM-108 pattern exactly (closes old open-ended row,
+inserts new row, one transaction, getCurrent* uses the date-bounded lookup,
+never the effectiveTo:null shortcut). (2) The ticket asked for
+carry-forward expiry "in weeks" but the real column
+(binaryCarryForwardExpiryMonths) and mlm_rules_log.md ("default 6 months")
+are both in months — kept months, ticket wording was a slip. (3) The
+ticket asked for "Direct rate + 5/3 split that must sum to 100%," but the
+schema's directRate field was unused by any engine code — only
+directCommissionSplit/directSavingSplit (read as independent % of
+investment amount, seeded 5/3) were ever read by direct-commission.ts.
+Confirmed with the user to reinterpret the two split fields as percentages
+OF directRate that must sum to 100 (seeded 62.5/37.5 of directRate=8, same
+effective 5%/3% payout) — this required a real formula change in
+direct-commission.ts (`amount * directRate/100 * split/100`, was `amount *
+split/100`) plus a one-time data migration converting the existing row's
+split values, not just new UI. Confirmed the effective payout was
+unchanged by re-running direct-commission.test.ts's existing
+hardcoded-amount assertions (500/300 on a 10000 investment) unmodified —
+they still passed, proving the migration + formula change together
+preserve real payout amounts exactly.
+## 2026-09-11 — Phase 11 (SCRUM-113)
+Mistake: first draft of `getSolvencyOverview`'s "total liabilities"
+formula summed wallet balances PLUS `Investment.amount` (unreleased
+principal) PLUS `SavingLot.amount` (unreleased saving), reading
+build_plan.md Part 5's wording ("wallet balances + locked capital +
+pending saving lots") as three ADDITIVE pools. Both additions were real
+double-counting bugs: tracing `purchasePackage` shows it credits the full
+principal directly into the buyer's Wallet A balance at purchase time
+(capital release later is literally "A -> B" per
+wallet_interest_audit_rules_log.md's own words — the same money moving,
+not new money surfacing), and tracing `direct-commission.ts` shows the 3%
+saving split simultaneously credits a real SAVING wallet balance AND
+creates a `SavingLot` row for the identical amount — the row is metadata
+tracking the unlock date, the wallet balance IS the money. Caught
+immediately (never shipped) because the ticket's own required test —
+"total liabilities matches [...], verified against a real purchase" —
+forced writing a before/after delta test with a hand-computed expected
+value; the first run's actual delta (21100, then 11100) didn't match the
+naive expected value (10800) on the first two attempts, which is what
+triggered actually tracing the money through `investments.ts`/
+`direct-commission.ts`/`capital-release.ts` instead of trusting the
+docs-derived formula.
+Rule: **`build_plan.md`'s Part 5 wording for this dashboard is
+under-specified/ambiguous about whether "locked capital"/"pending saving
+lots" are separate ledger locations or just movement-restriction labels
+on money already inside a wallet balance — they are the latter.** Any
+future aggregation feature that sums money across multiple tables
+(wallets + investments + saving_lots + anything similar) must trace at
+least one real write path for each table before trusting a docs
+paragraph's list of "components to sum" — a table existing and holding a
+plausible-sounding amount field does not mean summing it is additive
+with other tables; it may already be reflected there via a paired wallet
+credit. The delta-based test pattern (before/after around one real,
+traceable write) is what caught this — an absolute-total test against
+the shared dev DB would not have isolated the bug as cleanly, and a test
+using only hand-inserted/mocked rows would have "passed" against the
+wrong formula by construction. Prefer delta tests around one real
+end-to-end write (a real purchase, a real admin credit call) over either
+extreme whenever a new aggregation function is being verified for the
+first time.
+
+Rule: when a ticket describes a "reuse existing X" or "field Y already
+supports Z" premise, verify it against the actual schema/lib code before
+implementing — grepping for the claimed write function or checking whether
+a named schema field is actually read anywhere is cheap compared to
+building UI against a function or semantic that doesn't exist. When a
+ticket's business-rule wording conflicts with the schema/docs (weeks vs.
+months here), trust the schema+docs and flag the wording as a slip rather
+than silently picking one or adding a new unit-conversion layer. When
+reinterpreting a field's meaning requires a data migration, always verify
+the migration preserves the real-world effective values (not just "the
+numbers are different but plausible") by re-running whatever existing test
+already asserts on a concrete hardcoded outcome for that formula.
+
+## 2026-09-11 — Phase 11 (SCRUM-110)
+Mistake: adding new tests that call `createRankConfig` to spin up throwaway
+"scratch" ranks (needed to test editRankConfig's versioning without
+tripping the new "already achieved" guard on a real seeded rank) left
+those scratch rows genuinely ACTIVE (`effectiveTo: null`) for the rest of
+the same test-file run — cleanup only happened in the file's single
+`afterAll`, at the very end. Since `evaluateRankForUser` picks the
+highest-`rankOrder` newly-qualified rank, and every scratch rank was
+created above OG (the top of the real hierarchy) with a deliberately easy
+-to-clear threshold (25,000 MRV / 2 referrals, to prove versioning cheaply),
+any LATER test's sponsor who also happened to clear that modest bar got
+granted the leftover scratch rank instead of the real rank the test
+actually expected (e.g. "Partner") — 5 unrelated `chooseRankReward` tests
+started failing with "No rank award found... Partner" only when run AFTER
+the new admin-CRUD tests, passing cleanly alone. Confirmed the mechanism
+directly (not just retried and hoped) by adding a temporary console.log of
+the actual `evaluateRankForUser` result, which showed the sponsor being
+granted `ScratchAlreadyAchieved-<uuid>` instead of Partner.
+Rule: **a test-created config row in any table `evaluateRankForUser`/
+similar "pick the best active row" engine reads from — especially one
+positioned to structurally outrank real rows (highest rankOrder, lowest
+threshold) — must be deactivated (`effectiveTo` set, not just eventually
+deleted) immediately after the test that created it, via a describe
+-scoped `afterEach`, not left active until the file's single `afterAll`.**
+This is a variant of the standing "any test exercising shared/global state
+must neutralize its footprint for its own duration" principle (see the
+Phase 4 SCRUM-54 lesson on suspending real investments during an exit
+test) — applied here to admin-config rows instead of user/investment
+rows. When a set of previously-green tests starts failing only in
+combination with newly-added tests earlier in the same file, and passes
+cleanly when run alone, suspect exactly this class of cross-test
+config-row contamination before assuming flakiness or an unrelated
+regression — check what config rows are still active after the new tests
+run, not just whether the new tests' own assertions passed.
+
+Second mistake, same ticket: the manual live-verification scratch script's
+FIRST run genuinely wrote a real, permanent mutation to the real dev DB's
+seeded "Investor" rank_config row (`mrvRequired` 25000 -> 1) — because
+that run's `editRankConfig(mainAdmin.id, { rankName: "Investor", ... })`
+call, made BEFORE the script also fabricated a rank_awards row for
+Investor, correctly found zero real awards for "Investor" in this dev DB
+(all earlier test-created Investor awards are always cleaned up by
+`afterAll`) and so correctly succeeded — exactly matching the guard's
+intended behavior, not a bug. The script's own console.log incorrectly
+printed "FAIL: editing Investor should have been refused" for that
+outcome, which was actually correct, and the script had no cleanup for
+that particular code path since it was written assuming the edit would
+throw. This real, uncommitted-anywhere mutation then silently broke two
+UNRELATED already-green tests three test runs later
+("evaluateRankForUser > a user meeting only the referral count" and
+"getRankProgressForUser > an unranked user... nextRank is Investor"),
+both of which assert against the REAL seeded Investor thresholds
+(25,000/2) rather than a scratch rank, since neither test grants an
+Investor award and so never needed the SCRUM-110 achieved-rank guard
+-avoidance treatment the other rewritten tests got. Found and fixed:
+recomputed the correct restoration directly from the row's own history
+(deleted the erroneous new row, reopened the original seed row via
+`effectiveTo: null`) rather than guessing the original value, then
+re-ran the full suite as proof, per the standing repair principle.
+Rule: (1) **manually verifying an admin write function's "refuses X"
+behavior against the real dev DB must first confirm the precondition
+(here: "at least one real award exists for this rank") is actually
+true in THAT database before trusting the refusal check's result** —
+"my code's business logic says this should be refused" is not the same
+claim as "this specific dev DB's current data makes it refused right
+now," and a live-verification script must establish the precondition
+itself (as the corrected version of this script eventually did, by
+fabricating a real award first) rather than assuming a plausible-sounding
+one already holds. (2) When a live-verification script calls any
+versioned config admin-write function (`editRankConfig`,
+`setInterestRate`, `setCommissionConfig`, etc.) against a REAL seeded
+row (not a scratch/throwaway one), it must have unconditional cleanup
+(a `finally`, not a cleanup path only reachable from the expected-error
+branch) from the very first draft — the same discipline already
+standing for ledger-writing scratch scripts (SCRUM-54/79/99 lessons)
+applies equally to config-table scratch scripts, and this is the second
+time in this same session a manual-verification script needed a repair
+pass, which is exactly why the "run the full suite again after manual
+verification, before declaring done" step exists — it caught this.
+
+## 2026-09-12 — Phase 11 (post-SCRUM-115, reported by Zac)
+Mistake: `src/app/layout.tsx` (the true root layout) was `return children`
+with no `<html>`/`<body>` at all — those tags only existed in the nested
+`src/app/[locale]/layout.tsx`. This worked for every real page because every
+real page lives under `[locale]`. It broke the moment a route matched no
+`page.tsx` anywhere (e.g. bare `/admin`, which only has subpages like
+`/admin/solvency`, never `/admin` itself): Next.js always resolves its
+not-found rendering under the ROOT layout for a genuinely unmatched route,
+never under `[locale]/layout.tsx`, even though `[locale]/layout.tsx` is
+where the app's real `<html>`/`<body>` shell lives. The root layout's bare
+`children` return meant Next's own 404 renderer had no HTML document to
+mount into, crashing with "Missing `<html>` and `<body>` tags in the root
+layout" instead of showing a 404 page.
+Rule: **in any Next.js App Router project using a `[locale]`-style dynamic
+segment as the ONLY place `<html>`/`<body>` are rendered, the true root
+layout (`src/app/layout.tsx`) must still provide its own minimal
+`<html>`/`<body>` fallback shell** — it is reachable independently of
+`[locale]/layout.tsx` any time a route matches no page at all, not just for
+literal typos in the URL. Fixed: root layout now renders a minimal
+`<html lang="en"><body>` wrapper (no nav/next-intl — there is no resolved
+locale at this boundary), with `src/app/not-found.tsx` as the only page
+rendered inside it (plain bilingual-by-hardcoding text, since it can't use
+`useTranslations`). This is a standing requirement for this project, not a
+one-off fix: any FUTURE addition of another dynamic top-level segment
+(anything else that could 404 with no matching page) should re-check that
+the root layout's fallback shell still covers it, rather than assuming
+`[locale]/layout.tsx` alone is sufficient.
+
+## 2026-09-12 — Phase 1/10 (discovered via a real login attempt, not code review)
+Mistake: `login-form.tsx`'s `totp_enrollment_required` branch (shown when an
+admin/sub-admin has no `totpSecret` yet) was a dead-end message + "Back"
+button — it never called the fully-built and fully-tested backend
+enrollment flow (`/api/auth/totp/enroll`, `/api/auth/totp/confirm`,
+`src/lib/totp-enrollment.ts`, with its own passing test file). Since TOTP is
+mandatory for every admin with no bypass (`login()` never issues a session
+to an admin on password alone), this meant **any admin/sub-admin account
+with no TOTP secret could never complete login through the UI at all** —
+not a cosmetic gap, a hard lockout. This shipped silently because the
+backend was tested in isolation (unit tests call `beginTotpEnrollment`/
+`confirmTotpEnrollment` directly) and no exit test or manual verification
+pass ever drove a *fresh* admin account through the real browser-facing
+login form end to end — every later phase's manual verification reused an
+already-enrolled seed admin session (via a pasted/generated cookie) or the
+main admin's existing enrollment, never a cold "brand new admin, first
+login" path.
+Rule: **"the backend function has a passing unit test" is not the same
+claim as "a user can actually reach it through the UI"** — any auth/
+enrollment flow with more than one branch (login_required vs.
+enrollment_required, first-login vs. returning) needs at least one manual
+verification pass that starts from the specific branch being checked, not
+just the common one. For this project specifically: whenever a new
+admin-facing auth path is added or touched, manually drive it starting from
+a real account in that path's precondition state (e.g. `totpSecret: null`
+for enrollment) through the actual API/UI, not just via a lib-level unit
+test — see the fix verification in the SCRUM-115-adjacent todo.md entry for
+what that looks like end to end (real secret generated, real TOTP code
+computed from it, real confirm call, real resulting session checked against
+a real protected route).
+
+## 2026-09-12 — Phase 1 (DISABLE_ADMIN_TOTP dev escape hatch)
+Note (not a correction, a standing constraint going forward): added a
+`DISABLE_ADMIN_TOTP` config flag (`.env`, read by `auth.ts`'s `login()`) to
+unblock manual admin-panel review — a deliberate, user-requested, temporary
+weakening of the mandatory-2FA invariant for local dev only. The moment it
+was added to `.env`, it silently broke 8 tests in `totp-enrollment.test.ts`
+on the very next full-suite run, because `config.ts` loads `.env` via
+`dotenv/config` and `vitest` runs on the same host `.env` file as manual dev
+work — there is no separate test-environment file.
+Rule: **any new env var that changes security/auth-critical behavior must
+get an explicit override in `vitest.config.ts`'s `test.env` block, in the
+same commit that adds it to `.env`** — never assume "it defaults to safe"
+is enough, because a developer's local `.env` (used for exactly this kind
+of intentional convenience override) is NOT the same as "the default." The
+test suite must always exercise the real enforced/production-equivalent
+behavior regardless of what a developer has toggled locally. This is now
+the standing pattern for `DISABLE_ADMIN_TOTP` specifically — it stays
+forced to `"false"` in `vitest.config.ts` permanently, even after the flag
+itself is removed from `.env` before Phase 13 (removing the forced-false
+override at that point is harmless, but leaving `.env`'s convenience value
+unguarded in the meantime is not).
+
+## 2026-09-13 — Phase 10/11 (admin layout/nav shell missing entirely)
+Mistake: Phase 10 shipped the full user dashboard (6 screens) and Phase 11
+shipped the full admin panel (12 screens), each screen built and verified
+individually against its own exit test — but neither phase ever built a
+containing layout with navigation between its own screens until reported
+missing after the fact. The admin panel specifically had zero way to
+navigate from one screen to another; every admin page was only reachable by
+typing its exact URL. This wasn't caught by any phase's exit test because
+each exit test verified a screen's OWN functionality/permissions/i18n in
+isolation, never "can a user actually get here from another page in the
+same area."
+Rule: **every phase that builds multiple screens must include an explicit
+task for the layout and navigation shell BEFORE any individual screens are
+built. The shell comes first — building screens without a containing layout
+leaves the admin/user with no way to navigate between them.** This was
+missed in both Phase 10 and Phase 11. Going forward: the first ticket in any
+multi-screen phase must be "build the layout/nav shell for this area,"
+scaffolded with placeholder/empty screens if needed to prove the shell
+works, before any real screen's business logic is built — not bolted on
+afterward once all the screens already exist.

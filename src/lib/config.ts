@@ -20,6 +20,17 @@ const envSchema = z.object({
   // Main admin account created by `prisma db seed` — no defaults, must be set explicitly.
   SEED_ADMIN_EMAIL: z.email(),
   SEED_ADMIN_PASSWORD: z.string().min(8),
+  // Dev-only escape hatch: skips the mandatory admin TOTP branch in
+  // login() entirely, so an admin reaches a session on password alone.
+  // Defaults to false (TOTP enforced, matching production) in every
+  // environment unless explicitly overridden — see the DISABLE_ADMIN_TOTP
+  // guard in auth.ts's login() for where this is read, and the .env
+  // comment above it for the reason this must be flipped back before
+  // Phase 13 deployment.
+  DISABLE_ADMIN_TOTP: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
 });
 
 type Config = z.infer<typeof envSchema>;

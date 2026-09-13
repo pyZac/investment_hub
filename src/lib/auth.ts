@@ -5,6 +5,7 @@ import { createSession } from "./session";
 import { assertNotLockedOut, recordFailedAttempt, maybeTriggerLockout } from "./rate-limit";
 import { createPendingAuth, consumePendingAuth } from "./pending-auth";
 import { verifyTotpCode } from "./totp";
+import { config } from "./config";
 
 const loginInputSchema = z.object({
   email: z.email(),
@@ -27,7 +28,11 @@ export type LoginResult =
  *    no session exists yet;
  *  - admin/sub-admin accounts with no TOTP secret get a pending token that
  *    only authorizes enrollment (beginTotpEnrollment/confirmTotpEnrollment).
- * Mandatory 2FA means an admin can never reach a session on password alone.
+ * Mandatory 2FA means an admin can never reach a session on password alone —
+ * EXCEPT when `config.DISABLE_ADMIN_TOTP` is set, a dev-only escape hatch
+ * (see .env) that skips this branch entirely so an admin authenticates like
+ * a regular user. Defaults to false (TOTP enforced) everywhere; must be
+ * false/unset before Phase 13 deployment.
  */
 export async function login(
   input: z.infer<typeof loginInputSchema>,
@@ -47,7 +52,7 @@ export async function login(
     throw new Error("Invalid email or password.");
   }
 
-  if (user.role === "ADMIN") {
+  if (user.role === "ADMIN" && !config.DISABLE_ADMIN_TOTP) {
     if (!user.totpSecret) {
       const { token } = await createPendingAuth(user.id, "TOTP_ENROLLMENT", forDate);
       return { status: "totp_enrollment_required", pendingToken: token };

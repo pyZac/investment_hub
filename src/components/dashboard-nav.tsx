@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, GitBranch, Users, Wallet, Receipt, UserCircle } from "lucide-react";
+import { LayoutDashboard, GitBranch, Users, Wallet, Receipt, UserCircle, ShieldCheck } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/navigation";
 import { cn } from "@/lib/utils";
@@ -14,7 +14,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/profile", labelKey: "profile", icon: UserCircle },
 ] as const;
 
-export function DashboardNav({ className }: { className?: string }) {
+export function DashboardNav({ className, isAdmin }: { className?: string; isAdmin?: boolean }) {
   const t = useTranslations("Nav");
   const pathname = usePathname();
 
@@ -39,6 +39,20 @@ export function DashboardNav({ className }: { className?: string }) {
           </Link>
         );
       })}
+      {isAdmin ? (
+        <Link
+          href="/admin/users"
+          className={cn(
+            "flex flex-row items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors",
+            pathname.startsWith("/admin")
+              ? "bg-muted text-foreground"
+              : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+          )}
+        >
+          <ShieldCheck className="size-4 shrink-0" />
+          <span>{t("adminPanel")}</span>
+        </Link>
+      ) : null}
     </nav>
   );
 }

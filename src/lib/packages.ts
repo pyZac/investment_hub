@@ -52,6 +52,13 @@ const createPackageInputSchema = z.object({
 
 export type CreatePackageInput = z.infer<typeof createPackageInputSchema>;
 
+export class PackageHasInvestmentsError extends Error {
+  constructor() {
+    super("This package has existing investments and cannot be edited. Deactivate it instead to stop new purchases.");
+    this.name = "PackageHasInvestmentsError";
+  }
+}
+
 /**
  * Admin package creation. Requires the main admin or a PACKAGE_MANAGEMENT
  * grant. Packages carry name/amount only — no interest rate (Decision 4).
@@ -90,6 +97,15 @@ export type EditPackageInput = z.infer<typeof editPackageInputSchema>;
 /**
  * Admin package edit — name and/or amount only. Never touches isActive/
  * deactivatedAt; use deactivatePackage() for that.
+ *
+ * Refuses to edit a package that has ANY investment ever made under it
+ * (not just status: ACTIVE) — an investment's own `amount` is snapshotted
+ * at purchase time so editing the package's amount can never retroactively
+ * change it, but a renamed package would make every historical investment
+ * display ("Package: Gold") silently inconsistent with what was actually
+ * purchased, even for an already CAPITAL_RELEASED investment. Deactivating
+ * (hides from new purchases, never touches existing investments) is the
+ * correct tool once a package has any investment history — not editing.
  */
 export async function editPackage(actingAdminId: string, input: EditPackageInput) {
   const data = editPackageInputSchema.parse(input);
@@ -98,6 +114,11 @@ export async function editPackage(actingAdminId: string, input: EditPackageInput
   const existing = await prisma.package.findUnique({ where: { id: data.packageId } });
   if (!existing) {
     throw new Error("Invalid package: not found.");
+  }
+
+  const investmentCount = await prisma.investment.count({ where: { packageId: data.packageId } });
+  if (investmentCount > 0) {
+    throw new PackageHasInvestmentsError();
   }
 
   return prisma.$transaction(async (tx) => {
@@ -167,12 +188,76 @@ export async function deactivatePackage(actingAdminId: string, input: Deactivate
   });
 }
 
+const reactivatePackageInputSchema = z.object({
+  packageId: z.string(),
+});
+
+export type ReactivatePackageInput = z.infer<typeof reactivatePackageInputSchema>;
+
+/**
+ * Reverses deactivatePackage — makes the package purchasable again. No
+ * forDate param (unlike deactivatePackage) since deactivatedAt is simply
+ * cleared to null, not stamped with a new timestamp — mirrors
+ * reinstateUser's own no-forDate shape for the same reason. Throws if
+ * already active, mirroring deactivatePackage's own "already deactivated"
+ * throw-not-noop convention (this file's established symmetry, unlike the
+ * noop-on-already-in-that-state convention used elsewhere for
+ * suspend/reinstate — kept consistent with the sibling function in THIS
+ * file rather than a different file's convention).
+ */
+export async function reactivatePackage(actingAdminId: string, input: ReactivatePackageInput) {
+  const data = reactivatePackageInputSchema.parse(input);
+  await requirePackageManagement(actingAdminId);
+
+  const existing = await prisma.package.findUnique({ where: { id: data.packageId } });
+  if (!existing) {
+    throw new Error("Invalid package: not found.");
+  }
+  if (existing.isActive) {
+    throw new Error("Package is already active.");
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const pkg = await tx.package.update({
+      where: { id: data.packageId },
+      data: { isActive: true, deactivatedAt: null },
+    });
+
+    await tx.adminAction.create({
+      data: {
+        adminId: actingAdminId,
+        actionType: "PACKAGE_REACTIVATED",
+        targetPackageId: pkg.id,
+        reason: `Reactivated package "${pkg.name}".`,
+      },
+    });
+
+    return pkg;
+  });
+}
+
 /** Purchasable packages — active only. Used by the purchase flow UI. */
 export async function listPurchasablePackages() {
   return prisma.package.findMany({ where: { isActive: true }, orderBy: { amount: "asc" } });
 }
 
-/** All packages regardless of status — used by the admin management view. */
+/**
+ * All packages regardless of status, each annotated with whether it has
+ * any investment ever made under it — the admin management view's list
+ * needs this to flag "edit locked" rows without a failed submit round
+ * trip (see editPackage's own guard for why "any investment," not just
+ * status: ACTIVE). Batched via groupBy, not one count query per package.
+ */
 export async function listAllPackages() {
-  return prisma.package.findMany({ orderBy: { amount: "asc" } });
+  const [packages, counts] = await Promise.all([
+    prisma.package.findMany({ orderBy: { amount: "asc" } }),
+    prisma.investment.groupBy({ by: ["packageId"], _count: { _all: true } }),
+  ]);
+
+  const countByPackageId = new Map(counts.map((c) => [c.packageId, c._count._all]));
+
+  return packages.map((pkg) => ({
+    ...pkg,
+    investmentCount: countByPackageId.get(pkg.id) ?? 0,
+  }));
 }

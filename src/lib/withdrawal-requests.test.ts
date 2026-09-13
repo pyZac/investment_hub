@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
+import { randomBytes } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { registerAsRoot } from "./users";
@@ -7,12 +8,16 @@ import {
   submitWithdrawalRequest,
   approveWithdrawalRequest,
   rejectWithdrawalRequest,
+  listPendingWithdrawalRequests,
+  listDecidedWithdrawalRequests,
   BelowMinimumWithdrawalError,
   WithdrawalRequestNotPendingError,
 } from "./withdrawal-requests";
 import { NotFridayError } from "./withdrawal-guard";
 import { AccountSuspendedError } from "./transfers";
 import { cleanupLedgerEntriesForUsers } from "./test-helpers";
+import { hashToken } from "./token-hash";
+import { requirePermission } from "./route-guard";
 
 const createdUserIds: string[] = [];
 const createdRequestIds: string[] = [];
@@ -58,6 +63,19 @@ async function getMainAdmin() {
   return prisma.user.findFirstOrThrow({ where: { isMainAdmin: true } });
 }
 
+async function makeSessionToken(userId: string, forDate: Date) {
+  const token = randomBytes(32).toString("hex");
+  await prisma.session.create({
+    data: {
+      userId,
+      tokenHash: hashToken(token),
+      expiresAt: new Date(forDate.getTime() + 60 * 60 * 1000),
+      lastActiveAt: forDate,
+    },
+  });
+  return token;
+}
+
 async function fundWalletB(userId: string, amount: string) {
   const idempotencyKey = `test-fund:B:${userId}:${crypto.randomUUID()}`;
   await postTransaction({
@@ -73,6 +91,7 @@ afterAll(async () => {
   await prisma.withdrawalRequest.deleteMany({ where: { id: { in: createdRequestIds } } });
   await cleanupLedgerEntriesForUsers(createdUserIds);
   await prisma.adminPermissionGrant.deleteMany({ where: { adminUserId: { in: createdUserIds } } });
+  await prisma.session.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.securityQuestion.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.walletAccount.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
@@ -273,5 +292,149 @@ describe("rejectWithdrawalRequest", () => {
     await expect(rejectWithdrawalRequest(subAdmin.id, request.id, "No grant.", WEDNESDAY)).rejects.toThrow(
       /forbidden|WITHDRAWAL_APPROVAL/i,
     );
+  });
+});
+
+describe("route-level enforcement (SCRUM-105)", () => {
+  it("a sub-admin without WITHDRAWAL_APPROVAL is rejected at the route level", async () => {
+    const subAdmin = await makeAdmin();
+    const now = new Date();
+    const token = await makeSessionToken(subAdmin.id, now);
+
+    await expect(requirePermission("WITHDRAWAL_APPROVAL", now, token)).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("a sub-admin with WITHDRAWAL_APPROVAL is allowed at the route level", async () => {
+    const subAdmin = await makeAdmin();
+    await prisma.adminPermissionGrant.create({ data: { adminUserId: subAdmin.id, permission: "WITHDRAWAL_APPROVAL" } });
+    const now = new Date();
+    const token = await makeSessionToken(subAdmin.id, now);
+
+    const resolved = await requirePermission("WITHDRAWAL_APPROVAL", now, token);
+    expect(resolved.id).toBe(subAdmin.id);
+  });
+
+  it("the main admin reaches it with zero explicit grants", async () => {
+    const mainAdmin = await getMainAdmin();
+    const now = new Date();
+    const token = await makeSessionToken(mainAdmin.id, now);
+
+    const resolved = await requirePermission("WITHDRAWAL_APPROVAL", now, token);
+    expect(resolved.id).toBe(mainAdmin.id);
+  });
+});
+
+describe("approveWithdrawalRequest with a comment (SCRUM-105)", () => {
+  it("persists the comment to adminComment when provided", async () => {
+    const mainAdmin = await getMainAdmin();
+    const user = await makeUser();
+    await fundWalletB(user.id, "300");
+    const request = await submitWithdrawalRequest(user.id, "150", FRIDAY);
+    createdRequestIds.push(request.id);
+
+    const { request: updated } = await approveWithdrawalRequest(
+      mainAdmin.id,
+      request.id,
+      WEDNESDAY,
+      "Verified identity, approved.",
+    );
+
+    expect(updated.status).toBe("APPROVED");
+    expect(updated.adminComment).toBe("Verified identity, approved.");
+  });
+
+  it("still works with no comment (backward compatible, adminComment stays null)", async () => {
+    const mainAdmin = await getMainAdmin();
+    const user = await makeUser();
+    await fundWalletB(user.id, "300");
+    const request = await submitWithdrawalRequest(user.id, "150", FRIDAY);
+    createdRequestIds.push(request.id);
+
+    const { request: updated } = await approveWithdrawalRequest(mainAdmin.id, request.id, WEDNESDAY);
+
+    expect(updated.status).toBe("APPROVED");
+    expect(updated.adminComment).toBeNull();
+  });
+});
+
+describe("listPendingWithdrawalRequests", () => {
+  it("returns only PENDING requests, oldest first, with user name and current Wallet B balance", async () => {
+    const mainAdmin = await getMainAdmin();
+    const userA = await makeUser();
+    const userB = await makeUser();
+    await fundWalletB(userA.id, "500");
+    await fundWalletB(userB.id, "700");
+
+    const earlier = new Date(FRIDAY.getTime() - 60 * 60 * 1000);
+    const requestA = await submitWithdrawalRequest(userA.id, "100", earlier);
+    createdRequestIds.push(requestA.id);
+    const requestB = await submitWithdrawalRequest(userB.id, "200", FRIDAY);
+    createdRequestIds.push(requestB.id);
+
+    // A third, already-decided request must not appear in the pending queue.
+    const requestC = await submitWithdrawalRequest(userA.id, "50", FRIDAY);
+    createdRequestIds.push(requestC.id);
+    await rejectWithdrawalRequest(mainAdmin.id, requestC.id, "Not eligible.", WEDNESDAY);
+
+    const pending = await listPendingWithdrawalRequests(mainAdmin.id);
+    const ids = pending.map((r) => r.id);
+
+    expect(ids).toContain(requestA.id);
+    expect(ids).toContain(requestB.id);
+    expect(ids).not.toContain(requestC.id);
+
+    const indexA = ids.indexOf(requestA.id);
+    const indexB = ids.indexOf(requestB.id);
+    expect(indexA).toBeLessThan(indexB); // oldest first (FIFO)
+
+    const rowA = pending.find((r) => r.id === requestA.id)!;
+    expect(rowA.userName).toBe(userA.name);
+    expect(new Prisma.Decimal(rowA.walletBBalance).eq("500")).toBe(true);
+  });
+
+  it("rejects a caller without WITHDRAWAL_APPROVAL", async () => {
+    const subAdmin = await makeAdmin();
+    await expect(listPendingWithdrawalRequests(subAdmin.id)).rejects.toThrow(/forbidden/i);
+  });
+});
+
+describe("listDecidedWithdrawalRequests", () => {
+  it("returns only APPROVED/REJECTED, newest first, with decider and comment", async () => {
+    const mainAdmin = await getMainAdmin();
+    const user = await makeUser();
+    await fundWalletB(user.id, "500");
+
+    const requestApproved = await submitWithdrawalRequest(user.id, "100", FRIDAY);
+    createdRequestIds.push(requestApproved.id);
+    await approveWithdrawalRequest(mainAdmin.id, requestApproved.id, WEDNESDAY, "Looks good.");
+
+    const laterDecision = new Date(WEDNESDAY.getTime() + 60 * 60 * 1000);
+    const requestRejected = await submitWithdrawalRequest(user.id, "60", FRIDAY);
+    createdRequestIds.push(requestRejected.id);
+    await rejectWithdrawalRequest(mainAdmin.id, requestRejected.id, "Insufficient documentation.", laterDecision);
+
+    const pendingUntouched = await submitWithdrawalRequest(user.id, "70", FRIDAY);
+    createdRequestIds.push(pendingUntouched.id);
+
+    const decided = await listDecidedWithdrawalRequests(mainAdmin.id);
+    const ids = decided.map((r) => r.id);
+
+    expect(ids).toContain(requestApproved.id);
+    expect(ids).toContain(requestRejected.id);
+    expect(ids).not.toContain(pendingUntouched.id);
+
+    const indexRejected = ids.indexOf(requestRejected.id);
+    const indexApproved = ids.indexOf(requestApproved.id);
+    expect(indexRejected).toBeLessThan(indexApproved); // newest decidedAt first
+
+    const rejectedRow = decided.find((r) => r.id === requestRejected.id)!;
+    expect(rejectedRow.status).toBe("REJECTED");
+    expect(rejectedRow.decidedByAdminName).toBe(mainAdmin.name);
+    expect(rejectedRow.adminComment).toBe("Insufficient documentation.");
+  });
+
+  it("rejects a caller without WITHDRAWAL_APPROVAL", async () => {
+    const subAdmin = await makeAdmin();
+    await expect(listDecidedWithdrawalRequests(subAdmin.id)).rejects.toThrow(/forbidden/i);
   });
 });

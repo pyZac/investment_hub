@@ -419,6 +419,13 @@ const editRankConfigInputSchema = z.object({
 
 export type EditRankConfigInput = z.infer<typeof editRankConfigInputSchema>;
 
+export class RankAlreadyAchievedError extends Error {
+  constructor(rankName: string) {
+    super(`Rank "${rankName}" has already been achieved by at least one user and cannot be edited.`);
+    this.name = "RankAlreadyAchievedError";
+  }
+}
+
 /**
  * Admin edit of an existing rank's threshold/reward — MRV requirement,
  * referral count, and/or reward amount/type. Requires RANK_CONFIG (main
@@ -432,14 +439,20 @@ export type EditRankConfigInput = z.infer<typeof editRankConfigInputSchema>;
  * row starting at `forDate` with the edited fields, carrying over every
  * field the caller didn't specify from the row being closed (rankOrder
  * included — changing a rank's position in the order is not this
- * function's job, only its thresholds/reward). This is what makes the
- * critical invariant hold automatically, not as a special case: every
- * money-relevant reader already only ever queries `effectiveTo: null`
- * (evaluateRankForUser) or reads a value snapshotted at grant time onto
- * RankAward itself (payQueuedRankRewards) — neither ever re-reads a
- * historical rank_config row, so closing the old row instead of mutating
- * it is sufficient on its own to guarantee an edit is never retroactive to
- * an already-granted award or an already-evaluated month.
+ * function's job, only its thresholds/reward). This versioning alone is
+ * what makes an edit never retroactive to an already-granted award or an
+ * already-evaluated month: every money-relevant reader already only ever
+ * queries `effectiveTo: null` (evaluateRankForUser) or reads a value
+ * snapshotted at grant time onto RankAward itself (payQueuedRankRewards) —
+ * neither ever re-reads a historical rank_config row.
+ *
+ * SCRUM-110 layers a STRICTER admin-facing rule on top of that: refuses the
+ * edit outright (RankAlreadyAchievedError, nothing written) the moment ANY
+ * user has ever been granted this rank (a `rank_awards` row exists for
+ * `rankName`), even though the versioning above would make the edit safe
+ * regardless. This is a deliberate UX/business-rule restriction, not a
+ * correctness fix — the admin panel's "flag it clearly" requirement is
+ * enforced here as a hard refusal rather than a warning-only affordance.
  *
  * `forDate` is an explicit param (invariant #4), used both as the new
  * row's `effectiveFrom` and the closed row's `effectiveTo`.
@@ -453,6 +466,11 @@ export async function editRankConfig(actingAdminId: string, input: EditRankConfi
   });
   if (!current) {
     throw new Error(`No active rank_config row found for rank "${data.rankName}".`);
+  }
+
+  const alreadyAchieved = await prisma.rankAward.findFirst({ where: { rank: data.rankName } });
+  if (alreadyAchieved) {
+    throw new RankAlreadyAchievedError(data.rankName);
   }
 
   return prisma.$transaction(async (tx) => {
@@ -471,6 +489,7 @@ export async function editRankConfig(actingAdminId: string, input: EditRankConfi
         rankOrder: current.rankOrder,
         effectiveFrom: data.forDate,
         effectiveTo: null,
+        setByAdminId: actingAdminId,
       },
     });
 
@@ -493,21 +512,37 @@ const createRankConfigInputSchema = z.object({
   directReferralsRequired: z.number().int().positive(),
   rewardAmount: z.string().or(z.number()),
   rewardType: z.enum(["CASH", "CASH_OR_TRIP"]),
-  rankOrder: z.number().int(),
+  rankOrder: z.number().int().optional(),
   forDate: z.date(),
 });
 
 export type CreateRankConfigInput = z.infer<typeof createRankConfigInputSchema>;
 
+export class RankOrderTooLowError extends Error {
+  constructor(rankOrder: number, highestExisting: number) {
+    super(
+      `A new rank's rankOrder (${rankOrder}) must be strictly above the current highest rank's (${highestExisting}) — new ranks can only be added above the top of the existing hierarchy.`,
+    );
+    this.name = "RankOrderTooLowError";
+  }
+}
+
 /**
  * Admin creation of a brand-new rank (e.g. adding a rank above OG).
  * Requires RANK_CONFIG. Simply inserts a new active row — there is no
- * prior row to close since this rank has never existed. `rankOrder` is
- * caller-specified (not auto-incremented), matching how the 8 seed ranks
- * were themselves given explicit rankOrder values — the admin decides
- * where the new rank sits in the hierarchy, most naturally above the
- * current highest (OG's rankOrder), but this function does not enforce
- * that positioning itself.
+ * prior row to close since this rank has never existed.
+ *
+ * `rankOrder` is optional: when omitted (the admin panel's default path),
+ * it's auto-computed as `1 + the current highest active rank's rankOrder`
+ * — this makes "new ranks only go above the top" structural rather than
+ * merely server-validated, per SCRUM-110. When the caller does specify a
+ * `rankOrder` explicitly (e.g. a future non-UI caller), it's still
+ * validated to be strictly greater than every currently-active rank's
+ * rankOrder (RankOrderTooLowError, nothing written, otherwise) — SCRUM-108/
+ * 109's docs constraint ("only allowed above OG, the highest existing
+ * rank") applied generally rather than hardcoding the literal name "OG",
+ * since a future ticket could itself add a rank above OG, at which point
+ * that new rank — not OG — is the real ceiling.
  *
  * `rankName` collides with an existing rank's `rank_config_one_active_per_
  * rank` partial unique index if one is already active under the same name
@@ -519,6 +554,17 @@ export async function createRankConfig(actingAdminId: string, input: CreateRankC
   const data = createRankConfigInputSchema.parse(input);
   await assertHasRankConfigPermission(actingAdminId);
 
+  const highestActive = await prisma.rankConfig.findFirst({
+    where: { effectiveTo: null },
+    orderBy: { rankOrder: "desc" },
+  });
+  const highestExistingOrder = highestActive?.rankOrder ?? 0;
+
+  const rankOrder = data.rankOrder ?? highestExistingOrder + 1;
+  if (rankOrder <= highestExistingOrder) {
+    throw new RankOrderTooLowError(rankOrder, highestExistingOrder);
+  }
+
   return prisma.$transaction(async (tx) => {
     const created = await tx.rankConfig.create({
       data: {
@@ -527,9 +573,10 @@ export async function createRankConfig(actingAdminId: string, input: CreateRankC
         directReferralsRequired: data.directReferralsRequired,
         rewardAmount: data.rewardAmount,
         rewardType: data.rewardType,
-        rankOrder: data.rankOrder,
+        rankOrder,
         effectiveFrom: data.forDate,
         effectiveTo: null,
+        setByAdminId: actingAdminId,
       },
     });
 
@@ -584,4 +631,106 @@ export async function chooseRankReward(userId: string, rank: string, choice: "CA
     where: { id: award.id },
     data: { rewardChoice: choice },
   });
+}
+
+export type RankConfigListRow = {
+  id: string;
+  rankName: string;
+  mrvRequired: Prisma.Decimal;
+  directReferralsRequired: number;
+  rewardAmount: Prisma.Decimal;
+  rewardType: RankRewardType;
+  rankOrder: number;
+  effectiveFrom: Date;
+  /** Whether at least one user has ever been granted this rank — the admin
+   * panel's "flag it clearly, can't edit" signal (SCRUM-110). */
+  achievedByAnyUser: boolean;
+  setByAdminName: string | null;
+};
+
+/**
+ * All currently-active ranks (`effectiveTo: null`, one per rankName by
+ * construction — the partial unique index), ordered by rankOrder ascending
+ * — the admin panel's rank list. RANK_CONFIG-gated (main admin bypass);
+ * this is admin-facing config data, not user-owned, so invariant #9's
+ * self-ownership rule doesn't apply.
+ *
+ * Annotates each row with `achievedByAnyUser` so the UI can grey out /
+ * block the edit action before the admin even tries and hits
+ * RankAlreadyAchievedError — computed via a single `groupBy` over
+ * rank_awards rather than one query per rank, since the rank list is small
+ * but this avoids N+1 regardless.
+ */
+export async function listRankConfigs(actingAdminId: string): Promise<RankConfigListRow[]> {
+  await assertHasRankConfigPermission(actingAdminId);
+
+  const [activeRanks, achievedGroups] = await Promise.all([
+    prisma.rankConfig.findMany({
+      where: { effectiveTo: null },
+      orderBy: { rankOrder: "asc" },
+      include: { setByAdmin: { select: { name: true } } },
+    }),
+    prisma.rankAward.groupBy({ by: ["rank"] }),
+  ]);
+
+  const achievedRankNames = new Set(achievedGroups.map((g) => g.rank));
+
+  return activeRanks.map((r) => ({
+    id: r.id,
+    rankName: r.rankName,
+    mrvRequired: r.mrvRequired,
+    directReferralsRequired: r.directReferralsRequired,
+    rewardAmount: r.rewardAmount,
+    rewardType: r.rewardType,
+    rankOrder: r.rankOrder,
+    effectiveFrom: r.effectiveFrom,
+    achievedByAnyUser: achievedRankNames.has(r.rankName),
+    setByAdminName: r.setByAdmin?.name ?? null,
+  }));
+}
+
+export type RankConfigHistoryRow = {
+  id: string;
+  rankName: string;
+  mrvRequired: Prisma.Decimal;
+  directReferralsRequired: number;
+  rewardAmount: Prisma.Decimal;
+  rewardType: RankRewardType;
+  rankOrder: number;
+  effectiveFrom: Date;
+  effectiveTo: Date | null;
+  setByAdminName: string | null;
+  createdAt: Date;
+};
+
+/**
+ * Full version history across every rank (or just one, if `rankName` is
+ * given), newest effectiveFrom first — the admin panel's history view.
+ * RANK_CONFIG-gated (main admin bypass).
+ */
+export async function listRankConfigHistory(
+  actingAdminId: string,
+  rankName?: string,
+): Promise<RankConfigHistoryRow[]> {
+  await assertHasRankConfigPermission(actingAdminId);
+
+  const rows = await prisma.rankConfig.findMany({
+    where: rankName ? { rankName } : undefined,
+    orderBy: { effectiveFrom: "desc" },
+    include: { setByAdmin: { select: { name: true } } },
+  });
+
+  return rows.map((r) => ({
+    id: r.id,
+    rankName: r.rankName,
+    mrvRequired: r.mrvRequired,
+    directReferralsRequired: r.directReferralsRequired,
+    rewardAmount: r.rewardAmount,
+    rewardType: r.rewardType,
+    rankOrder: r.rankOrder,
+    effectiveFrom: r.effectiveFrom,
+    effectiveTo: r.effectiveTo,
+    setByAdminName: r.setByAdmin?.name ?? null,
+    createdAt: r.createdAt,
+  }));
 }

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { requireSession } from "./route-guard";
+import type { AdminPermission } from "@prisma/client";
+import { requireSession, requireMainAdmin, requirePermission } from "./route-guard";
 import { AuthError } from "./route-guard";
 
 /**
@@ -24,6 +25,47 @@ export async function requireSessionOrRedirect(forDate: Date) {
   } catch (err) {
     if (err instanceof AuthError) {
       redirect("/login");
+    }
+    throw err;
+  }
+}
+
+/**
+ * Same rationale as requireSessionOrRedirect, for admin account management
+ * pages (sub-admin creation/permissions/deactivation) — this surface is
+ * gated on isMainAdmin specifically, not any grantable permission
+ * (invariant #8). A 401 (no session) redirects to /login same as any
+ * protected page; a 403 (authenticated but not the main admin — including a
+ * sub-admin with every other permission granted) redirects to /dashboard
+ * rather than rendering a raw 500, since this is an expected outcome for
+ * most authenticated admins, not an exceptional error.
+ */
+export async function requireMainAdminOrRedirect(forDate: Date) {
+  try {
+    return await requireMainAdmin(forDate);
+  } catch (err) {
+    if (err instanceof AuthError) {
+      redirect(err.status === 401 ? "/login" : "/dashboard");
+    }
+    throw err;
+  }
+}
+
+/**
+ * Same rationale as requireMainAdminOrRedirect, for any admin page gated by
+ * a specific grantable AdminPermission (the 11-value catalog) rather than
+ * main-admin status. A sub-admin without the required grant gets a 403,
+ * redirected to /dashboard rather than a raw 500 — the phase 11 doc's own
+ * constraint ("a sub-admin with only WITHDRAWAL_APPROVAL sees that screen
+ * and nothing else") means hitting an unauthorized admin page directly is
+ * an expected, not exceptional, outcome.
+ */
+export async function requirePermissionOrRedirect(permission: AdminPermission, forDate: Date) {
+  try {
+    return await requirePermission(permission, forDate);
+  } catch (err) {
+    if (err instanceof AuthError) {
+      redirect(err.status === 401 ? "/login" : "/dashboard");
     }
     throw err;
   }

@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
+import { randomBytes } from "node:crypto";
 import { prisma } from "./prisma";
 import {
   PACKAGE_TIERS,
@@ -6,12 +7,27 @@ import {
   createPackage,
   editPackage,
   deactivatePackage,
+  reactivatePackage,
   listPurchasablePackages,
   listAllPackages,
+  PackageHasInvestmentsError,
 } from "./packages";
+import { registerAsRoot } from "./users";
+import { purchasePackage } from "./investments";
+import { postTransaction } from "./ledger-transaction";
+import { cleanupLedgerEntriesForUsers } from "./test-helpers";
+import { hashToken } from "./token-hash";
+import { requirePermission } from "./route-guard";
 
 const createdUserIds: string[] = [];
 const createdPackageIds: string[] = [];
+const createdInvestmentIds: string[] = [];
+
+const sampleQuestions = [
+  { question: "First pet's name?", answer: "Fluffy" },
+  { question: "Mother's maiden name?", answer: "Smith" },
+  { question: "First school?", answer: "Oakwood" },
+];
 
 async function makeAdmin() {
   const admin = await prisma.user.create({
@@ -49,7 +65,33 @@ async function makePackage(name: string, amount: string) {
   return pkg;
 }
 
+async function makeSessionToken(userId: string, forDate: Date) {
+  const token = randomBytes(32).toString("hex");
+  await prisma.session.create({
+    data: {
+      userId,
+      tokenHash: hashToken(token),
+      expiresAt: new Date(forDate.getTime() + 60 * 60 * 1000),
+      lastActiveAt: forDate,
+    },
+  });
+  return token;
+}
+
+async function fundWalletB(userId: string, amount: string) {
+  const idempotencyKey = `test-fund:B:${userId}:${crypto.randomUUID()}`;
+  await postTransaction({
+    entries: [
+      { userId, wallet: "B", direction: "CREDIT", amount, entryType: "ADMIN_CREDIT", comment: "Test funding." },
+      { userId: null, wallet: "SYSTEM_EXTERNAL", direction: "DEBIT", amount, entryType: "ADMIN_CREDIT", comment: "Test funding." },
+    ],
+    idempotencyKey,
+  });
+}
+
 afterAll(async () => {
+  await prisma.investment.deleteMany({ where: { id: { in: createdInvestmentIds } } });
+  await cleanupLedgerEntriesForUsers(createdUserIds);
   await prisma.adminAction.deleteMany({
     where: {
       OR: [{ adminId: { in: createdUserIds } }, { targetPackageId: { in: createdPackageIds } }],
@@ -57,6 +99,9 @@ afterAll(async () => {
   });
   await prisma.package.deleteMany({ where: { id: { in: createdPackageIds } } });
   await prisma.adminPermissionGrant.deleteMany({ where: { adminUserId: { in: createdUserIds } } });
+  await prisma.session.deleteMany({ where: { userId: { in: createdUserIds } } });
+  await prisma.securityQuestion.deleteMany({ where: { userId: { in: createdUserIds } } });
+  await prisma.walletAccount.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
   await prisma.$disconnect();
 });
@@ -177,6 +222,42 @@ describe("editPackage", () => {
     const unchanged = await prisma.package.findUniqueOrThrow({ where: { id: pkg.id } });
     expect(unchanged.amount.toString()).toBe("1000");
   });
+
+  it("refuses to edit a package that has an existing investment (any status, not just ACTIVE)", async () => {
+    const mainAdmin = await getMainAdmin();
+    const pkg = await makePackage(`HasInvestment-${crypto.randomUUID()}`, "1000");
+    const buyer = await registerAsRoot({
+      email: `pkg-buyer-${crypto.randomUUID()}@test.local`,
+      password: "password123",
+      name: "Package Buyer",
+      securityQuestions: sampleQuestions,
+    });
+    createdUserIds.push(buyer.id);
+    await fundWalletB(buyer.id, "1000");
+
+    const purchaseResult = await purchasePackage(buyer.id, {
+      packageId: pkg.id,
+      forDate: new Date("2026-08-01T10:00:00.000Z"),
+      idempotencyKey: `pkg-test-purchase:${buyer.id}:${crypto.randomUUID()}`,
+    });
+    createdInvestmentIds.push(purchaseResult.investment.id);
+
+    await expect(
+      editPackage(mainAdmin.id, { packageId: pkg.id, name: `ShouldNotRename-${crypto.randomUUID()}` }),
+    ).rejects.toThrow(PackageHasInvestmentsError);
+
+    const unchanged = await prisma.package.findUniqueOrThrow({ where: { id: pkg.id } });
+    expect(unchanged.name).toBe(pkg.name);
+    expect(unchanged.amount.toString()).toBe("1000");
+  });
+
+  it("still allows editing a package with zero investments (regression check against the new guard)", async () => {
+    const mainAdmin = await getMainAdmin();
+    const pkg = await makePackage(`NoInvestmentYet-${crypto.randomUUID()}`, "1000");
+
+    const updated = await editPackage(mainAdmin.id, { packageId: pkg.id, amount: "1234" });
+    expect(updated.amount.toString()).toBe("1234");
+  });
 });
 
 describe("deactivatePackage", () => {
@@ -218,6 +299,135 @@ describe("deactivatePackage", () => {
 
     const unchanged = await prisma.package.findUniqueOrThrow({ where: { id: pkg.id } });
     expect(unchanged.isActive).toBe(true);
+  });
+
+  it("does not affect the package's existing investments", async () => {
+    const mainAdmin = await getMainAdmin();
+    const pkg = await makePackage(`DeactivateKeepsInvestments-${crypto.randomUUID()}`, "1000");
+    const buyer = await registerAsRoot({
+      email: `pkg-deactivate-buyer-${crypto.randomUUID()}@test.local`,
+      password: "password123",
+      name: "Deactivate Buyer",
+      securityQuestions: sampleQuestions,
+    });
+    createdUserIds.push(buyer.id);
+    await fundWalletB(buyer.id, "1000");
+
+    const purchaseResult = await purchasePackage(buyer.id, {
+      packageId: pkg.id,
+      forDate: new Date("2026-08-01T10:00:00.000Z"),
+      idempotencyKey: `pkg-test-deactivate-purchase:${buyer.id}:${crypto.randomUUID()}`,
+    });
+    createdInvestmentIds.push(purchaseResult.investment.id);
+    const before = await prisma.investment.findUniqueOrThrow({ where: { id: purchaseResult.investment.id } });
+
+    await deactivatePackage(mainAdmin.id, { packageId: pkg.id, forDate: new Date() });
+
+    const after = await prisma.investment.findUniqueOrThrow({ where: { id: purchaseResult.investment.id } });
+    expect(after.status).toBe(before.status);
+    expect(after.amount.toString()).toBe(before.amount.toString());
+    expect(after.purchasedAt.getTime()).toBe(before.purchasedAt.getTime());
+    expect(after.profitStartsAt.getTime()).toBe(before.profitStartsAt.getTime());
+    expect(after.capitalUnlocksAt.getTime()).toBe(before.capitalUnlocksAt.getTime());
+    expect(after.packageId).toBe(pkg.id);
+  });
+});
+
+describe("reactivatePackage", () => {
+  it("main admin can reactivate a deactivated package, logging PACKAGE_REACTIVATED", async () => {
+    const mainAdmin = await getMainAdmin();
+    const pkg = await makePackage(`Reactivatable-${crypto.randomUUID()}`, "1000");
+    await deactivatePackage(mainAdmin.id, { packageId: pkg.id, forDate: new Date() });
+
+    const updated = await reactivatePackage(mainAdmin.id, { packageId: pkg.id });
+
+    expect(updated.isActive).toBe(true);
+    expect(updated.deactivatedAt).toBeNull();
+
+    const action = await prisma.adminAction.findFirst({
+      where: { targetPackageId: pkg.id, actionType: "PACKAGE_REACTIVATED" },
+    });
+    expect(action).not.toBeNull();
+    expect(action?.adminId).toBe(mainAdmin.id);
+  });
+
+  it("throws if the package is already active", async () => {
+    const mainAdmin = await getMainAdmin();
+    const pkg = await makePackage(`AlreadyActive-${crypto.randomUUID()}`, "1000");
+
+    await expect(reactivatePackage(mainAdmin.id, { packageId: pkg.id })).rejects.toThrow(/already active/i);
+  });
+
+  it("sub-admin without PACKAGE_MANAGEMENT is rejected", async () => {
+    const subAdmin = await makeAdmin();
+    const mainAdmin = await getMainAdmin();
+    const pkg = await makePackage(`ReactivateDenied-${crypto.randomUUID()}`, "1000");
+    await deactivatePackage(mainAdmin.id, { packageId: pkg.id, forDate: new Date() });
+
+    await expect(reactivatePackage(subAdmin.id, { packageId: pkg.id })).rejects.toThrow(
+      /forbidden|PACKAGE_MANAGEMENT/i,
+    );
+
+    const unchanged = await prisma.package.findUniqueOrThrow({ where: { id: pkg.id } });
+    expect(unchanged.isActive).toBe(false);
+  });
+});
+
+describe("route-level enforcement (SCRUM-107)", () => {
+  it("a sub-admin without PACKAGE_MANAGEMENT is rejected at the route level", async () => {
+    const subAdmin = await makeAdmin();
+    const now = new Date();
+    const token = await makeSessionToken(subAdmin.id, now);
+
+    await expect(requirePermission("PACKAGE_MANAGEMENT", now, token)).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("a sub-admin with PACKAGE_MANAGEMENT is allowed at the route level", async () => {
+    const subAdmin = await makeAdmin();
+    await prisma.adminPermissionGrant.create({ data: { adminUserId: subAdmin.id, permission: "PACKAGE_MANAGEMENT" } });
+    const now = new Date();
+    const token = await makeSessionToken(subAdmin.id, now);
+
+    const resolved = await requirePermission("PACKAGE_MANAGEMENT", now, token);
+    expect(resolved.id).toBe(subAdmin.id);
+  });
+
+  it("the main admin reaches it with zero explicit grants", async () => {
+    const mainAdmin = await getMainAdmin();
+    const now = new Date();
+    const token = await makeSessionToken(mainAdmin.id, now);
+
+    const resolved = await requirePermission("PACKAGE_MANAGEMENT", now, token);
+    expect(resolved.id).toBe(mainAdmin.id);
+  });
+});
+
+describe("listAllPackages investment-count annotation", () => {
+  it("reports the correct investmentCount for a package with and without investments", async () => {
+    const pkgWithout = await makePackage(`ListNoInvestment-${crypto.randomUUID()}`, "1000");
+    const pkgWith = await makePackage(`ListHasInvestment-${crypto.randomUUID()}`, "1000");
+    const buyer = await registerAsRoot({
+      email: `pkg-list-buyer-${crypto.randomUUID()}@test.local`,
+      password: "password123",
+      name: "List Buyer",
+      securityQuestions: sampleQuestions,
+    });
+    createdUserIds.push(buyer.id);
+    await fundWalletB(buyer.id, "1000");
+
+    const purchaseResult = await purchasePackage(buyer.id, {
+      packageId: pkgWith.id,
+      forDate: new Date("2026-08-01T10:00:00.000Z"),
+      idempotencyKey: `pkg-test-list-purchase:${buyer.id}:${crypto.randomUUID()}`,
+    });
+    createdInvestmentIds.push(purchaseResult.investment.id);
+
+    const all = await listAllPackages();
+    const rowWithout = all.find((p) => p.id === pkgWithout.id)!;
+    const rowWith = all.find((p) => p.id === pkgWith.id)!;
+
+    expect(rowWithout.investmentCount).toBe(0);
+    expect(rowWith.investmentCount).toBe(1);
   });
 });
 

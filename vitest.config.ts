@@ -15,6 +15,15 @@ export default defineConfig({
     // file's in-flight transaction. Sequential execution trades suite speed
     // for eliminating that whole class of cross-file race.
     fileParallelism: false,
+    // Forces the mandatory-admin-TOTP invariant to stay enforced in tests
+    // regardless of a developer's local .env DISABLE_ADMIN_TOTP convenience
+    // toggle (added 2026-09-12 to unblock manual admin-panel review) — the
+    // suite must always exercise the real production-equivalent auth
+    // behavior, never a host machine's local override. Overrides .env,
+    // which loads first.
+    env: {
+      DISABLE_ADMIN_TOTP: "false",
+    },
   },
   resolve: {
     alias: {

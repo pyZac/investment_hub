@@ -38,10 +38,19 @@ enum AdminActionType {
   PACKAGE_CREATED
   PACKAGE_EDITED
   PACKAGE_DEACTIVATED
+  PACKAGE_REACTIVATED
   USER_SUSPENDED
   USER_REINSTATED
   RANK_CONFIG_CREATED
   RANK_CONFIG_EDITED
+  RATE_CONFIG_SET
+  COMMISSION_CONFIG_SET
+  MANUAL_ADJUSTMENT_POSTED
+  JOB_MONITOR_TRIGGERED
+  SUBADMIN_CREATED
+  SUBADMIN_PERMISSIONS_UPDATED
+  SUBADMIN_DEACTIVATED
+  SUBADMIN_REACTIVATED
 }
 
 enum SecurityEventType {
@@ -114,6 +123,12 @@ model User {
   rankAwards RankAward[]
 
   rankForfeits RankForfeit[]
+
+  interestRateConfigsSet InterestRateConfig[]
+
+  commissionConfigsSet CommissionConfig[]
+
+  rankConfigsSet RankConfig[]
 
   @@map("users")
 }
@@ -319,6 +334,14 @@ model InterestRateConfig {
   effectiveFrom DateTime  @map("effective_from")
   effectiveTo   DateTime? @map("effective_to")
 
+  // Who set this version — nullable because the Phase 4 seed row predates
+  // this column (SCRUM-108). Unlike RankConfig's admin_actions-only
+  // attribution (no direct link back to the config row), this screen's
+  // history view needs to show "who set each rate" directly, so a plain FK
+  // is simpler and more reliable than matching admin_actions by timestamp.
+  setByAdminId String? @map("set_by_admin_id")
+  setByAdmin   User?   @relation(fields: [setByAdminId], references: [id])
+
   createdAt DateTime @default(now()) @map("created_at")
 
   // Enforces "exactly one active rate at any moment" (Decision 4) at the DB
@@ -437,6 +460,13 @@ model CommissionConfig {
   effectiveFrom DateTime  @map("effective_from")
   effectiveTo   DateTime? @map("effective_to")
 
+  // Who set this version — nullable because the original Phase 5 seed row
+  // predates this column (SCRUM-109, added the same way SCRUM-108 added
+  // InterestRateConfig.setByAdminId — a direct FK so the history view can
+  // show "who set each version" without matching admin_actions by timestamp).
+  setByAdminId String? @map("set_by_admin_id")
+  setByAdmin   User?   @relation(fields: [setByAdminId], references: [id])
+
   createdAt DateTime @default(now()) @map("created_at")
 
   // "At most one active row" (effective_to IS NULL) enforced by a hand-written
@@ -472,6 +502,15 @@ model RankConfig {
 
   effectiveFrom DateTime  @map("effective_from")
   effectiveTo   DateTime? @map("effective_to")
+
+  // Who set this version — same pattern as InterestRateConfig/
+  // CommissionConfig (SCRUM-108/109): a direct FK so the history view can
+  // show "who changed each version" without matching admin_actions by
+  // timestamp/reason text. Nullable because every pre-SCRUM-110 row
+  // (the 8 seed ranks, and any edit/create made before this column existed)
+  // predates it.
+  setByAdminId String? @map("set_by_admin_id")
+  setByAdmin   User?   @relation(fields: [setByAdminId], references: [id])
 
   createdAt DateTime @default(now()) @map("created_at")
 

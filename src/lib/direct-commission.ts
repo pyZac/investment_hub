@@ -131,9 +131,15 @@ export async function payDirectCommissionInTx(
 
   const config = await tx.commissionConfig.findFirstOrThrow({ where: { effectiveTo: null } });
 
+  // directCommissionSplit/directSavingSplit are percentages OF directRate
+  // (must sum to 100 — enforced by commission-config.ts's admin-facing
+  // write path, SCRUM-109), not independent percentages of the investment
+  // amount directly — e.g. directRate=8, split=62.5/37.5 means 8% * 62.5% =
+  // 5% and 8% * 37.5% = 3% of the investment amount.
   const amount = new Prisma.Decimal(investment.amount);
-  const commissionAmount = amount.mul(config.directCommissionSplit).div(100);
-  const savingAmount = amount.mul(config.directSavingSplit).div(100);
+  const directAmount = amount.mul(config.directRate).div(100);
+  const commissionAmount = directAmount.mul(config.directCommissionSplit).div(100);
+  const savingAmount = directAmount.mul(config.directSavingSplit).div(100);
 
   const comment = `Direct Commission for investment ${investmentId}.`;
 

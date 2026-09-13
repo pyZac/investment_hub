@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { prisma } from "./prisma";
 import { registerAsRoot, registerWithSponsor } from "./users";
 import { adminCreditWalletB } from "./admin-credit";
@@ -11,6 +11,10 @@ import {
   createRankConfig,
   chooseRankReward,
   getRankProgressForUser,
+  listRankConfigs,
+  listRankConfigHistory,
+  RankAlreadyAchievedError,
+  RankOrderTooLowError,
 } from "./rank";
 import { cleanupLedgerEntriesForUsers } from "./test-helpers";
 
@@ -118,7 +122,51 @@ async function giveActiveInvestment(userId: string, forDate: Date) {
   await makePurchase(userId, pkg.id, forDate);
 }
 
+const createdScratchRankNames: string[] = [];
+
+/**
+ * A throwaway rank nobody has ever been granted, for tests that need to
+ * exercise editRankConfig's versioning behavior WITHOUT tripping the
+ * SCRUM-110 "already achieved" guard — unlike the real seeded ranks
+ * (Investor etc.), which other tests in this file DO grant to users.
+ */
+async function makeScratchRank(rankName: string, forDate: Date) {
+  const created = await createRankConfig((await getMainAdmin()).id, {
+    rankName,
+    mrvRequired: "1000000",
+    directReferralsRequired: 1,
+    rewardAmount: "100",
+    rewardType: "CASH",
+    forDate,
+  });
+  createdScratchRankNames.push(rankName);
+  return created;
+}
+
+/**
+ * Closes out (effectiveTo, not deleted — afterAll hard-deletes at the very
+ * end) every scratch rank created so far that is still active. Without
+ * this, a scratch rank sitting above OG in rankOrder with an easy-to-clear
+ * threshold silently outranks every real rank for every LATER test in this
+ * file — evaluateRankForUser picks the highest-rankOrder newly-qualified
+ * rank, so a leftover active scratch row (e.g. from the "already achieved"
+ * guard test, deliberately given a low, easily-cleared MRV/referral
+ * threshold) gets granted instead of "Partner"/"Investor" to any later
+ * test's sponsor who happens to also clear the scratch rank's modest bar.
+ * Caught exactly this way: chooseRankReward's tests started failing with
+ * "No rank award found... Partner" only when run after this describe
+ * block, because the sponsor was actually granted a leftover scratch rank
+ * instead.
+ */
+async function closeAllScratchRanks(afterDate: Date) {
+  await prisma.rankConfig.updateMany({
+    where: { rankName: { in: createdScratchRankNames }, effectiveTo: null },
+    data: { effectiveTo: afterDate },
+  });
+}
+
 afterAll(async () => {
+  await prisma.rankConfig.deleteMany({ where: { rankName: { in: createdScratchRankNames } } });
   await prisma.adminAction.deleteMany({ where: { adminId: { in: createdUserIds } } });
   await prisma.adminPermissionGrant.deleteMany({ where: { adminUserId: { in: createdUserIds } } });
   await prisma.rankForfeit.deleteMany({ where: { userId: { in: createdUserIds } } });
@@ -702,13 +750,32 @@ describe("payQueuedRankRewards", () => {
 });
 
 describe("admin rank CRUD (editRankConfig / createRankConfig)", () => {
+  // Closes out every scratch rank this describe block created after EACH
+  // test — see closeAllScratchRanks's own doc comment for why this must
+  // not wait for the file's single afterAll. Uses a fixed instant safely
+  // after every test's own forDate (2026-09-15) so it can never retroactively
+  // affect an assertion the test itself already made.
+  afterEach(async () => {
+    await closeAllScratchRanks(new Date("2026-09-16T00:00:00.000Z"));
+  });
+
   it("editing a rank's threshold takes effect for future evaluations only — a month already evaluated under the OLD threshold is unaffected", async () => {
     const mainAdmin = await getMainAdmin();
     const forDate = new Date("2026-09-15T10:00:00.000Z");
 
-    // Evaluate a user under the REAL seeded Investor threshold (25,000/2)
-    // first, so this test proves an edit doesn't retroactively change an
-    // already-decided month's outcome.
+    // Uses a fresh scratch rank (never achieved by anyone) rather than the
+    // real seeded "Investor" — SCRUM-110 added a hard refusal on editing a
+    // rank at least one user has already achieved, which this test's own
+    // sponsor would otherwise trip the moment they're evaluated below. The
+    // scratch rank still proves the same non-retroactive-versioning
+    // behavior this test is actually about.
+    const rankName = `ScratchEditFutureOnly-${crypto.randomUUID()}`;
+    await makeScratchRank(rankName, forDate);
+    await editRankConfig(mainAdmin.id, { rankName, mrvRequired: "25000", directReferralsRequired: 2, forDate });
+
+    // Evaluate a user under the LOW threshold (25,000/2) first, so this
+    // test proves an edit doesn't retroactively change an already-decided
+    // month's outcome.
     const sponsor = await makeUser("edit-future-only");
     await giveActiveInvestment(sponsor.id, forDate);
     for (let i = 0; i < 2; i++) {
@@ -718,60 +785,75 @@ describe("admin rank CRUD (editRankConfig / createRankConfig)", () => {
     await seedMrv(sponsor.id, "2026-09", "25000");
     const septemberResult = await evaluateRankForUser(sponsor.id, "2026-09", forDate);
     expect(septemberResult.granted).toBe(true);
-    expect(septemberResult.rank).toBe("Investor");
+    expect(septemberResult.rank).toBe(rankName);
 
-    const originalInvestorConfig = await prisma.rankConfig.findFirstOrThrow({
-      where: { rankName: "Investor", effectiveTo: null },
+    // The scratch rank is now achieved — editRankConfig's SCRUM-110 guard
+    // refuses any further edit to it, so this test must instead prove
+    // non-retroactivity using a SECOND scratch rank, edited BEFORE anyone
+    // is evaluated against it.
+    const rankName2 = `ScratchEditFutureOnly2-${crypto.randomUUID()}`;
+    await makeScratchRank(rankName2, forDate);
+    await editRankConfig(mainAdmin.id, { rankName: rankName2, mrvRequired: "25000", directReferralsRequired: 2, forDate });
+
+    const originalConfig = await prisma.rankConfig.findFirstOrThrow({
+      where: { rankName: rankName2, effectiveTo: null },
     });
 
-    try {
-      // Admin raises Investor's MRV requirement well above what this
-      // sponsor's October MRV will be.
-      const edited = await editRankConfig(mainAdmin.id, {
-        rankName: "Investor",
-        mrvRequired: "9999999",
-        forDate,
-      });
-      expect(edited.mrvRequired.equals("9999999")).toBe(true);
-      expect(edited.effectiveTo).toBeNull();
+    // Admin raises rankName2's MRV requirement well above what the later
+    // sponsor's October MRV will be.
+    const edited = await editRankConfig(mainAdmin.id, {
+      rankName: rankName2,
+      mrvRequired: "9999999",
+      forDate,
+    });
+    expect(edited.mrvRequired.equals("9999999")).toBe(true);
+    expect(edited.effectiveTo).toBeNull();
 
-      // The OLD row is now closed, not deleted, not mutated in place.
-      const closedOriginal = await prisma.rankConfig.findUniqueOrThrow({
-        where: { id: originalInvestorConfig.id },
-      });
-      expect(closedOriginal.mrvRequired.equals("25000")).toBe(true);
-      expect(closedOriginal.effectiveTo).not.toBeNull();
+    // The OLD row is now closed, not deleted, not mutated in place.
+    const closedOriginal = await prisma.rankConfig.findUniqueOrThrow({
+      where: { id: originalConfig.id },
+    });
+    expect(closedOriginal.mrvRequired.equals("25000")).toBe(true);
+    expect(closedOriginal.effectiveTo).not.toBeNull();
 
-      // A DIFFERENT sponsor evaluated AFTER the edit, with MRV that would
-      // have qualified under the OLD threshold, no longer qualifies under
-      // the NEW one — proves the edit is live for future evaluations.
-      const laterSponsor = await makeUser("edit-future-only-later");
-      const octoberDate = new Date("2026-10-15T10:00:00.000Z");
-      await giveActiveInvestment(laterSponsor.id, octoberDate);
-      for (let i = 0; i < 2; i++) {
-        const referral = await makeSponsoredUser(laterSponsor.id, `edit-future-only-later-ref-${i}`);
-        await giveActiveInvestment(referral.id, octoberDate);
-      }
-      await seedMrv(laterSponsor.id, "2026-10", "25000");
-      const octoberResult = await evaluateRankForUser(laterSponsor.id, "2026-10", octoberDate);
-      expect(octoberResult.granted).toBe(false);
-    } finally {
-      // Restore the real seeded Investor config so later tests/dev data
-      // aren't left with a broken threshold.
-      const nowActive = await prisma.rankConfig.findFirstOrThrow({
-        where: { rankName: "Investor", effectiveTo: null },
-      });
-      await prisma.rankConfig.delete({ where: { id: nowActive.id } });
-      await prisma.rankConfig.update({
-        where: { id: originalInvestorConfig.id },
-        data: { effectiveTo: null },
-      });
+    // A sponsor evaluated AFTER the edit, with MRV that would have
+    // qualified under the OLD threshold, no longer qualifies under the
+    // NEW one — proves the edit is live for future evaluations. (Uses
+    // rankName, still at the low 25,000/2 threshold and un-achieved by
+    // this new sponsor's referral count, so evaluation naturally falls
+    // through to checking rankName2's now-much-higher requirement.)
+    const laterSponsor = await makeUser("edit-future-only-later");
+    const octoberDate = new Date("2026-10-15T10:00:00.000Z");
+    await giveActiveInvestment(laterSponsor.id, octoberDate);
+    for (let i = 0; i < 2; i++) {
+      const referral = await makeSponsoredUser(laterSponsor.id, `edit-future-only-later-ref-${i}`);
+      await giveActiveInvestment(referral.id, octoberDate);
     }
+    await seedMrv(laterSponsor.id, "2026-10", "25000");
+    const octoberResult = await evaluateRankForUser(laterSponsor.id, "2026-10", octoberDate);
+    // Still grants rankName (still 25,000/2, unaffected by rankName2's edit).
+    expect(octoberResult.granted).toBe(true);
+    expect(octoberResult.rank).toBe(rankName);
   });
 
   it("an already-granted award's snapshotted amount is unaffected by a later config edit", async () => {
     const mainAdmin = await getMainAdmin();
     const forDate = new Date("2026-09-15T10:00:00.000Z");
+
+    // Fresh scratch rank, edited BEFORE anyone is evaluated against it —
+    // once achieved, SCRUM-110's guard would refuse the later edit this
+    // test needs to perform.
+    const rankName = `ScratchEditNoRetro-${crypto.randomUUID()}`;
+    await makeScratchRank(rankName, forDate);
+    const created = await editRankConfig(mainAdmin.id, {
+      rankName,
+      mrvRequired: "25000",
+      directReferralsRequired: 2,
+      rewardAmount: "500",
+      rewardType: "CASH",
+      forDate,
+    });
+    expect(created.effectiveTo).toBeNull();
 
     const sponsor = await makeUser("edit-no-retro");
     await giveActiveInvestment(sponsor.id, forDate);
@@ -783,49 +865,107 @@ describe("admin rank CRUD (editRankConfig / createRankConfig)", () => {
     await evaluateRankForUser(sponsor.id, "2026-09", forDate);
 
     const awardBeforeEdit = await prisma.rankAward.findUniqueOrThrow({
-      where: { userId_rank: { userId: sponsor.id, rank: "Investor" } },
+      where: { userId_rank: { userId: sponsor.id, rank: rankName } },
     });
     expect(awardBeforeEdit.rewardAmount.equals("500")).toBe(true);
 
-    const originalInvestorConfig = await prisma.rankConfig.findFirstOrThrow({
-      where: { rankName: "Investor", effectiveTo: null },
+    // The rank is now achieved — editRankConfig's SCRUM-110 guard must
+    // refuse any further edit, proving this rank's config (and therefore
+    // the already-granted award) really is now immutable, not merely
+    // "safe to edit but nobody happens to." This IS this test's proof of
+    // non-retroactivity, replacing the old "edit succeeds, award unaffected"
+    // shape now that editing an achieved rank is refused outright.
+    await expect(
+      editRankConfig(mainAdmin.id, { rankName, rewardAmount: "999999", forDate }),
+    ).rejects.toThrow(RankAlreadyAchievedError);
+
+    const configAfterAttempt = await prisma.rankConfig.findFirstOrThrow({
+      where: { rankName, effectiveTo: null },
+    });
+    expect(configAfterAttempt.rewardAmount.equals("500")).toBe(true);
+
+    // The award itself is still the original $500, and the payout sweep
+    // pays exactly that snapshotted amount.
+    const friday = new Date("2026-09-18T10:00:00.000Z");
+    await payQueuedRankRewards(friday);
+    const ledgerEntries = await prisma.ledgerEntry.findMany({
+      where: { idempotencyKey: awardBeforeEdit.idempotencyKey },
+    });
+    const credit = ledgerEntries.find((e) => e.direction === "CREDIT")!;
+    expect(credit.amount.equals("500")).toBe(true);
+  });
+
+  it("refuses to edit a rank that at least one user has already achieved", async () => {
+    const mainAdmin = await getMainAdmin();
+    const forDate = new Date("2026-09-15T10:00:00.000Z");
+
+    const rankName = `ScratchAlreadyAchieved-${crypto.randomUUID()}`;
+    await makeScratchRank(rankName, forDate);
+    await editRankConfig(mainAdmin.id, { rankName, mrvRequired: "25000", directReferralsRequired: 2, forDate });
+
+    const sponsor = await makeUser("already-achieved-guard");
+    await giveActiveInvestment(sponsor.id, forDate);
+    for (let i = 0; i < 2; i++) {
+      const referral = await makeSponsoredUser(sponsor.id, `already-achieved-guard-ref-${i}`);
+      await giveActiveInvestment(referral.id, forDate);
+    }
+    await seedMrv(sponsor.id, "2026-09", "25000");
+    const result = await evaluateRankForUser(sponsor.id, "2026-09", forDate);
+    expect(result.granted).toBe(true);
+    expect(result.rank).toBe(rankName);
+
+    const activeBefore = await prisma.rankConfig.findFirstOrThrow({ where: { rankName, effectiveTo: null } });
+
+    await expect(
+      editRankConfig(mainAdmin.id, { rankName, mrvRequired: "1", forDate }),
+    ).rejects.toThrow(RankAlreadyAchievedError);
+
+    // Nothing written: still exactly one active row, unchanged.
+    const activeAfter = await prisma.rankConfig.findFirstOrThrow({ where: { rankName, effectiveTo: null } });
+    expect(activeAfter.id).toBe(activeBefore.id);
+    expect(activeAfter.mrvRequired.equals("25000")).toBe(true);
+    const rowCount = await prisma.rankConfig.count({ where: { rankName } });
+    expect(rowCount).toBe(2); // the original scratch row + the one editRankConfig call above.
+  });
+
+  it("refuses to create a new rank at or below the current highest rank's order (OG)", async () => {
+    const mainAdmin = await getMainAdmin();
+    const forDate = new Date("2026-09-15T10:00:00.000Z");
+
+    const highestActive = await prisma.rankConfig.findFirstOrThrow({
+      where: { effectiveTo: null },
+      orderBy: { rankOrder: "desc" },
     });
 
-    try {
-      await editRankConfig(mainAdmin.id, {
-        rankName: "Investor",
-        rewardAmount: "999999",
+    const rankName = `ScratchTooLow-${crypto.randomUUID()}`;
+    await expect(
+      createRankConfig(mainAdmin.id, {
+        rankName,
+        mrvRequired: "1",
+        directReferralsRequired: 1,
+        rewardAmount: "1",
+        rewardType: "CASH",
+        rankOrder: highestActive.rankOrder,
         forDate,
-      });
+      }),
+    ).rejects.toThrow(RankOrderTooLowError);
 
-      // The already-granted award is untouched — still the ORIGINAL
-      // snapshotted $500, not the new config's $999,999.
-      const awardAfterEdit = await prisma.rankAward.findUniqueOrThrow({
-        where: { userId_rank: { userId: sponsor.id, rank: "Investor" } },
-      });
-      expect(awardAfterEdit.rewardAmount.equals("500")).toBe(true);
-      expect(awardAfterEdit.id).toBe(awardBeforeEdit.id);
+    const belowRankName = `ScratchBelow-${crypto.randomUUID()}`;
+    await expect(
+      createRankConfig(mainAdmin.id, {
+        rankName: belowRankName,
+        mrvRequired: "1",
+        directReferralsRequired: 1,
+        rewardAmount: "1",
+        rewardType: "CASH",
+        rankOrder: highestActive.rankOrder - 1,
+        forDate,
+      }),
+    ).rejects.toThrow(RankOrderTooLowError);
 
-      // Confirm this by actually running the payout sweep: it pays the
-      // OLD $500, never the new $999,999, since the award stored its own
-      // amount at grant time.
-      const friday = new Date("2026-09-18T10:00:00.000Z");
-      await payQueuedRankRewards(friday);
-      const ledgerEntries = await prisma.ledgerEntry.findMany({
-        where: { idempotencyKey: awardBeforeEdit.idempotencyKey },
-      });
-      const credit = ledgerEntries.find((e) => e.direction === "CREDIT")!;
-      expect(credit.amount.equals("500")).toBe(true);
-    } finally {
-      const nowActive = await prisma.rankConfig.findFirstOrThrow({
-        where: { rankName: "Investor", effectiveTo: null },
-      });
-      await prisma.rankConfig.delete({ where: { id: nowActive.id } });
-      await prisma.rankConfig.update({
-        where: { id: originalInvestorConfig.id },
-        data: { effectiveTo: null },
-      });
-    }
+    // Nothing written for either rejected attempt.
+    const created = await prisma.rankConfig.findFirst({ where: { rankName: { in: [rankName, belowRankName] } } });
+    expect(created).toBeNull();
   });
 
   it("an admin without the RANK_CONFIG grant is rejected", async () => {
@@ -855,32 +995,24 @@ describe("admin rank CRUD (editRankConfig / createRankConfig)", () => {
       data: { adminUserId: subAdmin.id, permission: "RANK_CONFIG" },
     });
     const forDate = new Date("2026-09-15T10:00:00.000Z");
-    const originalInvestorConfig = await prisma.rankConfig.findFirstOrThrow({
-      where: { rankName: "Investor", effectiveTo: null },
+
+    // A fresh scratch rank, not "Investor" — by this point in the file,
+    // other tests above have already granted real Investor awards, which
+    // would trip SCRUM-110's "already achieved" refusal here.
+    const rankName = `ScratchSubAdminAllowed-${crypto.randomUUID()}`;
+    await makeScratchRank(rankName, forDate);
+
+    const edited = await editRankConfig(subAdmin.id, {
+      rankName,
+      directReferralsRequired: 3,
+      forDate,
     });
+    expect(edited.directReferralsRequired).toBe(3);
 
-    try {
-      const edited = await editRankConfig(subAdmin.id, {
-        rankName: "Investor",
-        directReferralsRequired: 3,
-        forDate,
-      });
-      expect(edited.directReferralsRequired).toBe(3);
-
-      const action = await prisma.adminAction.findFirst({
-        where: { adminId: subAdmin.id, actionType: "RANK_CONFIG_EDITED" },
-      });
-      expect(action).not.toBeNull();
-    } finally {
-      const nowActive = await prisma.rankConfig.findFirstOrThrow({
-        where: { rankName: "Investor", effectiveTo: null },
-      });
-      await prisma.rankConfig.delete({ where: { id: nowActive.id } });
-      await prisma.rankConfig.update({
-        where: { id: originalInvestorConfig.id },
-        data: { effectiveTo: null },
-      });
-    }
+    const action = await prisma.adminAction.findFirst({
+      where: { adminId: subAdmin.id, actionType: "RANK_CONFIG_EDITED" },
+    });
+    expect(action).not.toBeNull();
   });
 
   it("a new rank can be added above OG and becomes evaluable going forward", async () => {
@@ -888,17 +1020,24 @@ describe("admin rank CRUD (editRankConfig / createRankConfig)", () => {
     const forDate = new Date("2026-09-15T10:00:00.000Z");
 
     try {
+      // rankOrder omitted deliberately — auto-computed as 1 + the current
+      // highest active rank's order (SCRUM-110), which is no longer
+      // reliably 8 (OG) by this point in the file: earlier tests in this
+      // same describe block create their own scratch ranks above OG too.
+      const highestBefore = await prisma.rankConfig.findFirstOrThrow({
+        where: { effectiveTo: null },
+        orderBy: { rankOrder: "desc" },
+      });
       const created = await createRankConfig(mainAdmin.id, {
         rankName: "Legend",
         mrvRequired: "1000",
         directReferralsRequired: 1,
         rewardAmount: "50",
         rewardType: "CASH",
-        rankOrder: 9,
         forDate,
       });
       expect(created.rankName).toBe("Legend");
-      expect(created.rankOrder).toBe(9);
+      expect(created.rankOrder).toBe(highestBefore.rankOrder + 1);
       expect(created.effectiveTo).toBeNull();
 
       const action = await prisma.adminAction.findFirst({
@@ -1007,5 +1146,75 @@ describe("chooseRankReward", () => {
       where: { userId_rank: { userId: sponsor.id, rank: "Partner" } },
     });
     expect(award.rewardChoice).toBeNull();
+  });
+});
+
+describe("listRankConfigs / listRankConfigHistory (admin panel read paths)", () => {
+  afterEach(async () => {
+    await closeAllScratchRanks(new Date("2026-09-16T00:00:00.000Z"));
+  });
+
+  it("rejects a caller without RANK_CONFIG", async () => {
+    const subAdmin = await makeSubAdmin();
+    await expect(listRankConfigs(subAdmin.id)).rejects.toThrow(/forbidden/i);
+    await expect(listRankConfigHistory(subAdmin.id)).rejects.toThrow(/forbidden/i);
+  });
+
+  it("listRankConfigs includes every active rank, ordered by rankOrder ascending, flagging achieved ranks", async () => {
+    const mainAdmin = await getMainAdmin();
+    const forDate = new Date("2026-09-15T10:00:00.000Z");
+
+    const rankName = `ScratchListConfigs-${crypto.randomUUID()}`;
+    await makeScratchRank(rankName, forDate);
+    await editRankConfig(mainAdmin.id, { rankName, mrvRequired: "25000", directReferralsRequired: 2, forDate });
+
+    const sponsor = await makeUser("list-configs-achieved");
+    await giveActiveInvestment(sponsor.id, forDate);
+    for (let i = 0; i < 2; i++) {
+      const referral = await makeSponsoredUser(sponsor.id, `list-configs-achieved-ref-${i}`);
+      await giveActiveInvestment(referral.id, forDate);
+    }
+    await seedMrv(sponsor.id, "2026-09", "25000");
+    await evaluateRankForUser(sponsor.id, "2026-09", forDate);
+
+    const ranks = await listRankConfigs(mainAdmin.id);
+
+    // Ordered ascending by rankOrder.
+    for (let i = 0; i < ranks.length - 1; i++) {
+      expect(ranks[i].rankOrder).toBeLessThan(ranks[i + 1].rankOrder);
+    }
+
+    const investorRow = ranks.find((r) => r.rankName === "Investor")!;
+    expect(investorRow.achievedByAnyUser).toBe(true); // achieved by earlier tests in this file
+
+    const scratchRow = ranks.find((r) => r.rankName === rankName)!;
+    expect(scratchRow.achievedByAnyUser).toBe(true); // just achieved above
+
+    // A never-achieved rank (this test's own second scratch rank, never
+    // evaluated against) correctly reports false.
+    const neverAchievedRankName = `ScratchListConfigsUnachieved-${crypto.randomUUID()}`;
+    await makeScratchRank(neverAchievedRankName, forDate);
+    const ranksAfter = await listRankConfigs(mainAdmin.id);
+    const unachievedRow = ranksAfter.find((r) => r.rankName === neverAchievedRankName)!;
+    expect(unachievedRow.achievedByAnyUser).toBe(false);
+  });
+
+  it("listRankConfigHistory returns all versions newest-effectiveFrom-first, including a newly created one, optionally filtered by rankName", async () => {
+    const mainAdmin = await getMainAdmin();
+    const forDate = new Date("2026-09-15T10:00:00.000Z");
+
+    const rankName = `ScratchListHistory-${crypto.randomUUID()}`;
+    const created = await makeScratchRank(rankName, forDate);
+
+    const allHistory = await listRankConfigHistory(mainAdmin.id);
+    expect(allHistory.some((h) => h.id === created.id)).toBe(true);
+    for (let i = 0; i < allHistory.length - 1; i++) {
+      expect(allHistory[i].effectiveFrom.getTime()).toBeGreaterThanOrEqual(allHistory[i + 1].effectiveFrom.getTime());
+    }
+
+    const filteredHistory = await listRankConfigHistory(mainAdmin.id, rankName);
+    expect(filteredHistory).toHaveLength(1);
+    expect(filteredHistory[0].id).toBe(created.id);
+    expect(filteredHistory[0].setByAdminName).toBe(mainAdmin.name);
   });
 });
