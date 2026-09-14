@@ -15,6 +15,7 @@ const ADMIN_PERMISSION_CATALOG: AdminPermission[] = [
   "MANUAL_ADJUSTMENT",
   "JOB_MONITOR",
   "SOLVENCY_VIEW",
+  "SECURITY_VIEW",
 ];
 
 export class NotMainAdminError extends Error {

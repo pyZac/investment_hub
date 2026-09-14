@@ -10,7 +10,7 @@ const PAGE_SIZE = 50;
  * bounded, small ledger (no real-world transaction volume), so this exists
  * only to prevent an unbounded query, not to silently truncate a real export.
  */
-const EXPORT_ROW_LIMIT = 50_000;
+export const EXPORT_ROW_LIMIT = 50_000;
 
 async function assertHasLedgerViewPermission(actingAdminId: string): Promise<void> {
   const admin = await prisma.user.findUnique({ where: { id: actingAdminId } });
@@ -68,7 +68,13 @@ function buildWhere(filters: LedgerExplorerFilters) {
   };
 }
 
-function toRow(entry: {
+/**
+ * Exported for reuse by statement.ts (SCRUM-118's per-user statement
+ * export) — the exact same row-shaping used by the admin ledger explorer's
+ * own queries below, so the two never drift on what "user label"/"wallet
+ * label"/"entry type label" mean for the same underlying row.
+ */
+export function toRow(entry: {
   id: string;
   createdAt: Date;
   user: { name: string } | null;

@@ -44,11 +44,13 @@ async function assertHasUserManagementOrCreditIssuancePermission(actingAdminId: 
   const grant = await prisma.adminPermissionGrant.findFirst({
     where: {
       adminUserId: actingAdminId,
-      permission: { in: ["USER_MANAGEMENT", "CREDIT_ISSUANCE", "MANUAL_ADJUSTMENT", "LEDGER_VIEW"] },
+      permission: { in: ["USER_MANAGEMENT", "CREDIT_ISSUANCE", "MANUAL_ADJUSTMENT", "LEDGER_VIEW", "SECURITY_VIEW"] },
     },
   });
   if (!grant) {
-    throw new Error("Forbidden: missing USER_MANAGEMENT, CREDIT_ISSUANCE, MANUAL_ADJUSTMENT, or LEDGER_VIEW permission.");
+    throw new Error(
+      "Forbidden: missing USER_MANAGEMENT, CREDIT_ISSUANCE, MANUAL_ADJUSTMENT, LEDGER_VIEW, or SECURITY_VIEW permission.",
+    );
   }
 }
 

@@ -13,6 +13,7 @@ import {
   Activity,
   Scale,
   Receipt,
+  ShieldAlert,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/navigation";
@@ -31,10 +32,11 @@ const ADMIN_NAV_ITEMS = [
   { href: "/admin/job-monitor", labelKey: "jobMonitor", icon: Activity },
   { href: "/admin/solvency", labelKey: "solvency", icon: Scale },
   { href: "/admin/ledger", labelKey: "ledger", icon: Receipt },
+  { href: "/admin/security-events", labelKey: "securityEvents", icon: ShieldAlert },
 ] as const;
 
 /**
- * All 12 links always render regardless of the acting admin's specific
+ * All links always render regardless of the acting admin's specific
  * permission grants — this nav only decides what's SHOWN, not what's
  * ALLOWED (invariant #8's enforcement lives in each page.tsx's own
  * requirePermissionOrRedirect/requireMainAdminOrRedirect call, unchanged by

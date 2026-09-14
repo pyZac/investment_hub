@@ -3,6 +3,7 @@ import { runDailyInterestCatchUp, DAILY_INTEREST_JOB_TYPE } from "./daily-intere
 import { runBinaryCycleCatchUp, BINARY_CYCLE_JOB_TYPE } from "./binary-cycle-job";
 import { runRankEvaluationCatchUp, RANK_EVALUATION_JOB_TYPE } from "./rank-evaluation-job";
 import { runRankPayoutCatchUp, RANK_PAYOUT_JOB_TYPE } from "./rank-payout-job";
+import { runReconciliationCatchUp, RECONCILIATION_JOB_TYPE } from "./reconciliation-job";
 
 async function assertHasJobMonitorPermission(actingAdminId: string): Promise<void> {
   const admin = await prisma.user.findUnique({ where: { id: actingAdminId } });
@@ -21,14 +22,16 @@ async function assertHasJobMonitorPermission(actingAdminId: string): Promise<voi
 }
 
 /**
- * The 4 real scheduled jobs (src/worker/index.ts) — the single source of
+ * The 5 real scheduled jobs (src/worker/index.ts) — the single source of
  * truth this screen mirrors. SCRUM-112's own ticket text named a
  * "carry_forward_expiry" job that does not exist as a separate cron
  * entry/catch-up function (carry-forward expiry is logic applied INSIDE
  * runBinaryCycleCatchUp's own closeBinaryCycleForUser call, not an
  * independent job), and omitted rank_evaluation, which does exist — this
- * list is deliberately the real 4, confirmed with the project owner,
- * per this ticket's own "No new cron logic" constraint.
+ * list is deliberately the real set, confirmed with the project owner,
+ * per this ticket's own "No new cron logic" constraint. `reconciliation`
+ * (Phase 12/SCRUM-117) was added after SCRUM-112 and follows the exact same
+ * contract as the original 4.
  *
  * Each catch-up function is safe to call again by construction: every one
  * of them only ever processes periods whose job_runs row is not already
@@ -43,6 +46,7 @@ export const JOB_TYPES = [
   { jobType: BINARY_CYCLE_JOB_TYPE, run: runBinaryCycleCatchUp },
   { jobType: RANK_EVALUATION_JOB_TYPE, run: runRankEvaluationCatchUp },
   { jobType: RANK_PAYOUT_JOB_TYPE, run: runRankPayoutCatchUp },
+  { jobType: RECONCILIATION_JOB_TYPE, run: runReconciliationCatchUp },
 ] as const;
 
 export type JobType = (typeof JOB_TYPES)[number]["jobType"];

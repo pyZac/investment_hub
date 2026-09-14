@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { TransactionFilters } from "./transaction-filters";
 import { TransactionList } from "./transaction-list";
 import { TransactionPagination } from "./transaction-pagination";
+import { ExportStatementButton } from "./export-statement-button";
 
 const VALID_WALLETS: Wallet[] = ["A", "B", "C", "SAVING"];
 const VALID_ENTRY_TYPES: LedgerEntryType[] = [
@@ -60,9 +61,12 @@ export default async function TransactionsPage({
 
   return (
     <div className="mx-auto max-w-6xl space-y-8 px-6 py-10 lg:px-8">
-      <div className="space-y-1.5 border-b border-border/60 pb-6">
-        <h1 className="font-heading text-3xl font-semibold tracking-tight">{t("pageTitle")}</h1>
-        <p className="text-sm text-muted-foreground">{t("pageDescription")}</p>
+      <div className="flex flex-col gap-4 border-b border-border/60 pb-6 sm:flex-row sm:items-end sm:justify-between">
+        <div className="space-y-1.5">
+          <h1 className="font-heading text-3xl font-semibold tracking-tight">{t("pageTitle")}</h1>
+          <p className="text-sm text-muted-foreground">{t("pageDescription")}</p>
+        </div>
+        <ExportStatementButton />
       </div>
 
       <Card className="border-border/60">

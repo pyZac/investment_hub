@@ -212,6 +212,11 @@
     "emptyStateTitle": "No transactions found",
     "emptyStateDescription": "Try widening your filters, or check back once you have some activity.",
 
+    "exportStatement": "Export statement",
+    "exportPending": "Exporting…",
+    "errorForbidden": "You don't have permission to do that.",
+    "errorGeneric": "Something went wrong. Please try again.",
+
     "paginationPrevious": "Previous",
     "paginationNext": "Next",
     "paginationSummary": "Page {page} of {totalPages}"
@@ -759,6 +764,43 @@
     "errorForbidden": "You do not have permission to perform this action.",
     "errorGeneric": "Something went wrong. Please try again."
   },
+  "AdminSecurityEvents": {
+    "pageTitle": "Security Events",
+    "pageDescription": "Failed logins, lockouts, 2FA changes, and admin actions in one chronological feed.",
+
+    "listHeading": "All security events",
+    "listDescription": "Combine filters by user, event source, and date range.",
+
+    "filterUserLabel": "User",
+    "userSearchPlaceholder": "Search by name or email…",
+    "userNoResults": "No matching users.",
+    "clearUser": "Clear selection",
+    "filterSourceLabel": "Source",
+    "filterSourceAll": "All sources",
+    "sourceSecurityEvent": "Security Event",
+    "sourceAdminAction": "Admin Action",
+    "filterDateFromLabel": "From",
+    "filterDateToLabel": "To",
+    "filterClear": "Clear filters",
+
+    "colDate": "Date",
+    "colSource": "Source",
+    "colType": "Event",
+    "colUser": "User",
+    "colDetail": "Detail",
+
+    "detailNone": "—",
+    "loading": "Loading events…",
+    "emptyStateTitle": "No security events found",
+    "emptyStateDescription": "Try widening your filters.",
+
+    "paginationPrevious": "Previous",
+    "paginationNext": "Next",
+    "paginationSummary": "Page {page} of {totalPages}",
+
+    "errorForbidden": "You do not have permission to perform this action.",
+    "errorGeneric": "Something went wrong. Please try again."
+  },
   "AdminNav": {
     "shellLabel": "Admin Panel",
     "users": "Users",
@@ -772,7 +814,8 @@
     "manualAdjustment": "Manual Adjustment",
     "jobMonitor": "Job Monitor",
     "solvency": "Solvency",
-    "ledger": "Ledger"
+    "ledger": "Ledger",
+    "securityEvents": "Security Events"
   },
   "AdminJobMonitor": {
     "pageTitle": "Job Monitor",

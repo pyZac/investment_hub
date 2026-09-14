@@ -29,6 +29,7 @@ enum AdminPermission {
   MANUAL_ADJUSTMENT
   JOB_MONITOR
   SOLVENCY_VIEW
+  SECURITY_VIEW
 }
 
 enum AdminActionType {

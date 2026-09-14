@@ -42,3 +42,6 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
+
+# Postgres backup dumps (docs/backup-strategy.md) — real user data, never committed
+/backups

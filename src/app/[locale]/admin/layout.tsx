@@ -8,7 +8,7 @@ import { Link } from "@/i18n/navigation";
 
 /**
  * The dedicated admin shell (SCRUM-116-equivalent bugfix): a sidebar with
- * links to all 12 admin screens, completely separate from the user
+ * links to every admin screen, completely separate from the user
  * -dashboard header in `(app)/layout.tsx` — the two are sibling layouts
  * under `[locale]/layout.tsx` (shell-only, no chrome of its own), so
  * neither leaks into the other by construction, not by a conditional check.

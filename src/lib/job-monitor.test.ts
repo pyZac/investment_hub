@@ -172,9 +172,11 @@ describe("route-level enforcement", () => {
 });
 
 describe("JOB_TYPES", () => {
-  it("monitors exactly the 4 real scheduled jobs, no more, no fewer", () => {
+  it("monitors exactly the 5 real scheduled jobs, no more, no fewer", () => {
     const jobTypeNames = JOB_TYPES.map((j) => j.jobType);
-    expect(jobTypeNames.sort()).toEqual(["binary_cycle", "daily_interest", "rank_evaluation", "rank_payout"].sort());
+    expect(jobTypeNames.sort()).toEqual(
+      ["binary_cycle", "daily_interest", "rank_evaluation", "rank_payout", "reconciliation"].sort(),
+    );
   });
 });
 
@@ -305,13 +307,17 @@ describe("listJobStatuses", () => {
     expect(dailyInterestStatus.lastFailedError).toBe("Simulated failure for test coverage.");
   });
 
-  it("reports NEVER_RUN for a job type with no job_runs rows at all — sanity check on the shape, not a real scenario for these 4 jobs in this dev DB", async () => {
+  it("returns exactly one status per real job type, whatever its history", async () => {
     const mainAdmin = await getMainAdmin();
     const statuses = await listJobStatuses(mainAdmin.id);
-    // All 4 real jobs have genuine history in this shared dev DB by now —
+    // The original 4 jobs have genuine history in this shared dev DB by
+    // now; `reconciliation` (added SCRUM-117) may or may not, depending on
+    // whether the worker's own cron or another test has triggered it yet —
     // this just confirms the returned shape always includes every job
-    // type, never silently drops one.
-    expect(statuses).toHaveLength(4);
+    // type exactly once, never silently drops or duplicates one, and that
+    // NEVER_RUN is a valid/expected shape for a job with no history.
+    expect(statuses).toHaveLength(5);
+    expect(new Set(statuses.map((s) => s.jobType)).size).toBe(5);
     for (const status of statuses) {
       expect(["RUNNING", "COMPLETED", "FAILED", "NEVER_RUN"]).toContain(status.currentStatus);
     }

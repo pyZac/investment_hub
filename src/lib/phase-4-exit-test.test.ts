@@ -33,6 +33,11 @@ const createdPackageIds: string[] = [];
 const createdInvestmentIds: string[] = [];
 const createdConfigIds: string[] = [];
 const createdJobRunPeriodKeys: string[] = [];
+/** The id of whatever interest_rate_config row was active before this test
+ * closed it — reopened in afterAll (see the comment there) so this test
+ * doesn't permanently strip the DB of an active rate for every later test
+ * in the same run. */
+let closedActiveRateConfigId: string | null = null;
 
 const sampleQuestions = [
   { question: "First pet's name?", answer: "Fluffy" },
@@ -164,6 +169,21 @@ afterAll(async () => {
   if (createdConfigIds.length > 0) {
     await prisma.interestRateConfig.deleteMany({ where: { id: { in: createdConfigIds } } });
   }
+  // Reopen whatever row this test closed to make room for its own two
+  // fabricated windows (rate5/rate7, deleted above by id) — without this,
+  // the DB is left with NO active interest_rate_config row at all after
+  // this test runs, which breaks every other test/real code path that
+  // expects dailyRate()/getCurrentRate() to always find one. This is the
+  // same restore-what-you-touched discipline every other test file in this
+  // project already follows for shared singleton config rows (see
+  // rate-config.test.ts's withRestoredActiveRate, interest-rate.test.ts's
+  // own finally-block restore).
+  if (closedActiveRateConfigId) {
+    await prisma.interestRateConfig.update({
+      where: { id: closedActiveRateConfigId },
+      data: { effectiveTo: null },
+    });
+  }
   await prisma.package.deleteMany({ where: { id: { in: createdPackageIds } } });
   await prisma.securityQuestion.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.walletAccount.deleteMany({ where: { userId: { in: createdUserIds } } });
@@ -191,6 +211,7 @@ describe("Phase 4 exit test — 90 fabricated days", () => {
     const rateChangeDate = new Date("2026-10-01T00:00:00.000Z");
     const existingActive = await prisma.interestRateConfig.findFirst({ where: { effectiveTo: null } });
     if (existingActive) {
+      closedActiveRateConfigId = existingActive.id;
       await prisma.interestRateConfig.update({
         where: { id: existingActive.id },
         data: { effectiveTo: windowStart },

@@ -212,6 +212,11 @@
     "emptyStateTitle": "لا توجد معاملات",
     "emptyStateDescription": "جرّب توسيع نطاق الفلاتر، أو تحقق لاحقًا بعد إجراء بعض النشاط.",
 
+    "exportStatement": "تصدير كشف الحساب",
+    "exportPending": "جارٍ التصدير…",
+    "errorForbidden": "ليس لديك صلاحية القيام بذلك.",
+    "errorGeneric": "حدث خطأ ما. الرجاء المحاولة مرة أخرى.",
+
     "paginationPrevious": "السابق",
     "paginationNext": "التالي",
     "paginationSummary": "صفحة {page} من {totalPages}"
@@ -759,6 +764,43 @@
     "errorForbidden": "لا تملك صلاحية تنفيذ هذا الإجراء.",
     "errorGeneric": "حدث خطأ ما. الرجاء المحاولة مرة أخرى."
   },
+  "AdminSecurityEvents": {
+    "pageTitle": "الأحداث الأمنية",
+    "pageDescription": "محاولات تسجيل الدخول الفاشلة، وحالات الإيقاف المؤقت، وتغييرات التحقق الثنائي، وإجراءات المسؤولين في سجل زمني واحد.",
+
+    "listHeading": "جميع الأحداث الأمنية",
+    "listDescription": "ادمج الفلاتر حسب المستخدم ومصدر الحدث ونطاق التاريخ.",
+
+    "filterUserLabel": "المستخدم",
+    "userSearchPlaceholder": "ابحث بالاسم أو البريد الإلكتروني…",
+    "userNoResults": "لا يوجد مستخدمون مطابقون.",
+    "clearUser": "إزالة التحديد",
+    "filterSourceLabel": "المصدر",
+    "filterSourceAll": "جميع المصادر",
+    "sourceSecurityEvent": "حدث أمني",
+    "sourceAdminAction": "إجراء إداري",
+    "filterDateFromLabel": "من",
+    "filterDateToLabel": "إلى",
+    "filterClear": "مسح الفلاتر",
+
+    "colDate": "التاريخ",
+    "colSource": "المصدر",
+    "colType": "الحدث",
+    "colUser": "المستخدم",
+    "colDetail": "التفاصيل",
+
+    "detailNone": "—",
+    "loading": "جارٍ تحميل الأحداث…",
+    "emptyStateTitle": "لا توجد أحداث أمنية",
+    "emptyStateDescription": "حاول توسيع نطاق الفلاتر.",
+
+    "paginationPrevious": "السابق",
+    "paginationNext": "التالي",
+    "paginationSummary": "صفحة {page} من {totalPages}",
+
+    "errorForbidden": "لا تملك صلاحية تنفيذ هذا الإجراء.",
+    "errorGeneric": "حدث خطأ ما. الرجاء المحاولة مرة أخرى."
+  },
   "AdminNav": {
     "shellLabel": "لوحة الإدارة",
     "users": "المستخدمون",
@@ -772,7 +814,8 @@
     "manualAdjustment": "التعديل اليدوي",
     "jobMonitor": "مراقبة المهام",
     "solvency": "الملاءة المالية",
-    "ledger": "السجل"
+    "ledger": "السجل",
+    "securityEvents": "الأحداث الأمنية"
   },
   "AdminJobMonitor": {
     "pageTitle": "مراقبة المهام",

@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: investment_hub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/investment_hub?schema=public
+      TIMEZONE: Asia/Dubai
+      MIN_WITHDRAWAL: "50"
+      DEFAULT_DAILY_INTEREST_RATE_BP: "0"
+      DEFAULT_DIRECT_COMMISSION_RATE_BP: "0"
+      SEED_ADMIN_EMAIL: admin@investment-hub.local
+      SEED_ADMIN_PASSWORD: ci-only-not-a-real-secret
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Apply database migrations
+        run: npx prisma migrate deploy
+
+      - name: Seed database (main admin)
+        run: npx tsx prisma/seed.ts
+
+      # Informational only (invariant: dependency audit is Phase 12's
+      # deliverable, not a hard gate) — this project currently carries
+      # pre-existing transitive vulnerabilities with no non-breaking fix
+      # (next/sharp/postcss chain, react-d3-tree's uuid dependency, etc.).
+      # Failing the build on those would block every PR for issues outside
+      # this project's direct control; `npm audit fix` is expected to be
+      # run periodically as a separate maintenance task instead, and
+      # Dependabot (dependabot.yml) opens PRs for what it can bump safely.
+      - name: Dependency audit (informational — does not fail the build)
+        run: npm audit || true
+
+      # Permanent gate (invariant #10): $queryRawUnsafe/$executeRawUnsafe
+      # bypass Prisma's parameterization entirely and must never appear in
+      # real application code. Test files are excluded — 5 test files use
+      # $executeRawUnsafe with a FIXED literal SQL string (never
+      # interpolated input) to toggle DB triggers for test setup (e.g.
+      # temporarily disabling the ledger's append-only trigger to simulate
+      # an orphan row for invariant-checks.test.ts) — that's test
+      # scaffolding with a hardcoded string, not the unparameterized-input
+      # risk this gate exists to catch.
+      - name: Grep for unsafe raw Prisma queries (permanent gate)
+        run: |
+          MATCHES=$(grep -rln "queryRawUnsafe\|executeRawUnsafe" src/ prisma/ 2>/dev/null | grep -v -E "\.test\.ts$|test-helpers\.ts$" || true)
+          if [ -n "$MATCHES" ]; then
+            echo "Found \$queryRawUnsafe/\$executeRawUnsafe outside test scaffolding (invariant #10 violation):"
+            echo "$MATCHES"
+            exit 1
+          fi
+          echo "No unsafe raw Prisma queries found outside test scaffolding."
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+      # security-headers.test.ts (SCRUM-120) makes real HTTP requests
+      # against a live server — next.config.ts's headers() only takes
+      # effect through Next's own server, so it can't be unit-tested any
+      # other way. Start the production build in the background and wait
+      # for it to answer before running the suite.
+      - name: Start app server (for security-headers.test.ts)
+        run: |
+          npm start &
+          echo $! > /tmp/app-server.pid
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/ -o /dev/null; then
+              echo "App server is up."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "App server did not become ready in time."
+          exit 1
+
+      - name: Test
+        run: npm test
+
+      - name: Stop app server
+        if: always()
+        run: |
+          if [ -f /tmp/app-server.pid ]; then
+            kill "$(cat /tmp/app-server.pid)" || true
+          fi

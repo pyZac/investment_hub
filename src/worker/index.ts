@@ -8,6 +8,7 @@ import { runDailyInterestCatchUp } from "../lib/daily-interest-job";
 import { runBinaryCycleCatchUp } from "../lib/binary-cycle-job";
 import { runRankEvaluationCatchUp } from "../lib/rank-evaluation-job";
 import { runRankPayoutCatchUp } from "../lib/rank-payout-job";
+import { runReconciliationCatchUp } from "../lib/reconciliation-job";
 
 /**
  * Worker process entrypoint. This file is the one place `new Date()` is
@@ -102,9 +103,35 @@ cron.schedule(
   { timezone: config.TIMEZONE },
 );
 
+/**
+ * Nightly reconciliation + invariant sweep (Phase 12, SCRUM-117). 00:20
+ * Asia/Dubai — after the daily interest job's own 00:05 trigger, so the
+ * check reflects the day's postings rather than racing them. Offset from
+ * the other midnight-boundary jobs (00:05 daily interest, 00:10 rank
+ * evaluation) to reduce contention.
+ * runReconciliationCatchUp itself takes `today` as a parameter and stays
+ * pure/testable; it has no real "catch-up" backlog (a point-in-time
+ * snapshot check, not per-period business data) but follows the same
+ * job_runs contract as every other scheduled job here.
+ */
+cron.schedule(
+  "20 0 * * *",
+  async () => {
+    console.log("[worker] reconciliation job triggered");
+    try {
+      await runReconciliationCatchUp(new Date());
+      console.log("[worker] reconciliation job completed");
+    } catch (error) {
+      console.error("[worker] reconciliation job failed", error);
+    }
+  },
+  { timezone: config.TIMEZONE },
+);
+
 console.log(`[worker] started, daily interest job scheduled for 00:05 ${config.TIMEZONE}`);
 console.log(`[worker] binary cycle job scheduled for Saturday 00:00 ${config.TIMEZONE}`);
 console.log(`[worker] rank evaluation job scheduled for 00:10 on the 1st of each month ${config.TIMEZONE}`);
 console.log(`[worker] rank payout job scheduled for Saturday 00:00 ${config.TIMEZONE}`);
+console.log(`[worker] reconciliation job scheduled for 00:20 ${config.TIMEZONE}`);
 
 setInterval(() => {}, 1 << 30);
