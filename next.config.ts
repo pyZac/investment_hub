@@ -42,6 +42,10 @@ function buildCsp(): string {
 }
 
 const nextConfig: NextConfig = {
+  // Standalone output traces the exact runtime dependency subset into
+  // .next/standalone (SCRUM-124) — lets the production Docker image copy a
+  // pre-pruned server bundle instead of shipping full node_modules.
+  output: "standalone",
   async headers() {
     return [
       {
