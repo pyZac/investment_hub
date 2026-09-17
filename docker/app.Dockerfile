@@ -52,12 +52,11 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/prisma ./prisma
-# The Prisma CLI (needed for Render's pre-deploy `prisma migrate deploy`
-# command, per docs/runbook.md's "Running migrations" section) is NOT part
-# of Next's standalone trace — standalone only traces what the running
-# Next.js SERVER needs at request time, and this project never imports the
-# `prisma` CLI package from application code, only from an out-of-band CLI
-# invocation.
+# The Prisma CLI (needed to run `prisma migrate deploy` and the seed script
+# before the server starts serving traffic) is NOT part of Next's standalone
+# trace — standalone only traces what the running Next.js SERVER needs at
+# request time, and this project never imports the `prisma` CLI package
+# from application code, only from an out-of-band CLI invocation.
 #
 # Cherry-picking individual node_modules subfolders (prisma, @prisma/engines,
 # etc.) was tried and does NOT work: the CLI's dependency graph goes deeper
@@ -74,10 +73,18 @@ COPY --from=builder /app/prisma ./prisma
 # an UNGENERATED @prisma/client; merging it in would silently overwrite
 # .next/standalone's real, working generated client (confirmed this
 # collision directly while diagnosing the cherry-pick approach above).
-# Isolating it under `migrate/` means the CLI is invoked from that
-# directory (`cd migrate && node_modules/.bin/prisma migrate deploy`, from
-# the repo root's own prisma/schema.prisma) without ever touching the
-# server's own module resolution.
 COPY --from=deps /app/node_modules ./migrate/node_modules
+# tsx is needed to run prisma/seed.ts directly (it's TypeScript, and
+# `package.json#prisma.seed` shells out to `tsx prisma/seed.ts`) — added the
+# same way docker/worker.Dockerfile already does for its own tsx runtime
+# need, since tsx is a devDependency and isn't part of `deps`'s install.
+RUN cd migrate && npm install tsx@^4.23.11 --no-save
+# seed.ts imports from src/lib (prisma client, config, password hashing,
+# wallet creation) — copied here so the seed step can run standalone
+# without needing the rest of the app's source tree.
+COPY --from=builder /app/src/lib ./migrate/src/lib
+COPY --from=builder /app/prisma ./migrate/prisma
+COPY scripts/start.sh ./scripts/start.sh
+RUN chmod +x ./scripts/start.sh
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["/bin/sh", "/app/scripts/start.sh"]
