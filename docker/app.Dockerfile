@@ -7,6 +7,21 @@ COPY package.json package-lock.json ./
 COPY prisma ./prisma
 RUN npm ci
 
+# Dedicated stage for the migrate/seed toolchain's node_modules — a clean
+# copy of `deps`'s install (already includes prisma, the CLI needed for
+# `prisma migrate deploy`) plus tsx (needed to run prisma/seed.ts directly,
+# since it's TypeScript and tsx is a devDependency not otherwise reachable
+# from the isolated /app/migrate directory the prod stage uses). Installing
+# tsx HERE, into a normal npm-managed directory (real package.json present,
+# from the `deps` COPY above), then copying the RESULT wholesale into
+# `prod` below — never running `npm install` a second time directly inside
+# an already-copied, package.json-less node_modules tree, which risks npm
+# reconciling/rewriting that tree in ways that can silently break existing
+# bin symlinks (confirmed as the likely cause of a real "prisma: not found"
+# failure when tsx was previously installed this way, post-copy, in `prod`).
+FROM deps AS migrate-deps
+RUN npm install tsx@^4.23.11 --no-save
+
 # --- Development ---
 # Kept as an intermediate named stage, BEFORE `prod` in file order, so local
 # dev (docker-compose.yml's `target: dev`) still works unchanged — Docker
@@ -73,12 +88,7 @@ COPY --from=builder /app/prisma ./prisma
 # an UNGENERATED @prisma/client; merging it in would silently overwrite
 # .next/standalone's real, working generated client (confirmed this
 # collision directly while diagnosing the cherry-pick approach above).
-COPY --from=deps /app/node_modules ./migrate/node_modules
-# tsx is needed to run prisma/seed.ts directly (it's TypeScript, and
-# `package.json#prisma.seed` shells out to `tsx prisma/seed.ts`) — added the
-# same way docker/worker.Dockerfile already does for its own tsx runtime
-# need, since tsx is a devDependency and isn't part of `deps`'s install.
-RUN cd migrate && npm install tsx@^4.23.11 --no-save
+COPY --from=migrate-deps /app/node_modules ./migrate/node_modules
 # seed.ts imports from src/lib (prisma client, config, password hashing,
 # wallet creation) — copied here so the seed step can run standalone
 # without needing the rest of the app's source tree.
