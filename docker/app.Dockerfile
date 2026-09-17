@@ -52,5 +52,32 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/prisma ./prisma
+# The Prisma CLI (needed for Render's pre-deploy `prisma migrate deploy`
+# command, per docs/runbook.md's "Running migrations" section) is NOT part
+# of Next's standalone trace — standalone only traces what the running
+# Next.js SERVER needs at request time, and this project never imports the
+# `prisma` CLI package from application code, only from an out-of-band CLI
+# invocation.
+#
+# Cherry-picking individual node_modules subfolders (prisma, @prisma/engines,
+# etc.) was tried and does NOT work: the CLI's dependency graph goes deeper
+# than it looks from the top-level @prisma/* packages — confirmed directly,
+# `@prisma/config` alone pulls in further packages (e.g. `effect`) not
+# under the `prisma`/`@prisma` scope at all, and there is no reliable way to
+# enumerate a package's full transitive closure by hand. Copying the
+# ENTIRE node_modules from the `deps` stage (a real `npm ci`, which resolves
+# the complete graph correctly by construction) is the only approach that
+# doesn't silently break on the next dependency bump.
+#
+# Kept under a separate `migrate/` path, not merged into the app's own
+# node_modules — `deps`'s node_modules predates `prisma generate`, so it has
+# an UNGENERATED @prisma/client; merging it in would silently overwrite
+# .next/standalone's real, working generated client (confirmed this
+# collision directly while diagnosing the cherry-pick approach above).
+# Isolating it under `migrate/` means the CLI is invoked from that
+# directory (`cd migrate && node_modules/.bin/prisma migrate deploy`, from
+# the repo root's own prisma/schema.prisma) without ever touching the
+# server's own module resolution.
+COPY --from=deps /app/node_modules ./migrate/node_modules
 EXPOSE 3000
 CMD ["node", "server.js"]
