@@ -4,11 +4,36 @@
 import "dotenv/config";
 import cron from "node-cron";
 import { config } from "../lib/config";
-import { runDailyInterestCatchUp } from "../lib/daily-interest-job";
-import { runBinaryCycleCatchUp } from "../lib/binary-cycle-job";
-import { runRankEvaluationCatchUp } from "../lib/rank-evaluation-job";
-import { runRankPayoutCatchUp } from "../lib/rank-payout-job";
-import { runReconciliationCatchUp } from "../lib/reconciliation-job";
+import { runDailyInterestCatchUp, DAILY_INTEREST_JOB_TYPE } from "../lib/daily-interest-job";
+import { runBinaryCycleCatchUp, BINARY_CYCLE_JOB_TYPE } from "../lib/binary-cycle-job";
+import { runRankEvaluationCatchUp, RANK_EVALUATION_JOB_TYPE } from "../lib/rank-evaluation-job";
+import { runRankPayoutCatchUp, RANK_PAYOUT_JOB_TYPE } from "../lib/rank-payout-job";
+import { runReconciliationCatchUp, RECONCILIATION_JOB_TYPE } from "../lib/reconciliation-job";
+
+/**
+ * Structured logging (SCRUM-128). Each call prints exactly one JSON object
+ * per line to stdout/stderr — Railway's log viewer can filter by `job` or
+ * `level` this way, which free-text `[worker] ... job triggered` strings
+ * couldn't support. No new logging library, per this ticket's own
+ * instruction — plain JSON.stringify at each call site is sufficient for
+ * this project's scope.
+ */
+type JobLogLevel = "info" | "error";
+
+function logJob(level: JobLogLevel, job: string, message: string, extra?: Record<string, unknown>): void {
+  const line = JSON.stringify({
+    timestamp: new Date().toISOString(),
+    level,
+    job,
+    message,
+    ...extra,
+  });
+  if (level === "error") {
+    console.error(line);
+  } else {
+    console.log(line);
+  }
+}
 
 /**
  * Worker process entrypoint. This file is the one place `new Date()` is
@@ -23,12 +48,12 @@ import { runReconciliationCatchUp } from "../lib/reconciliation-job";
 cron.schedule(
   "5 0 * * *",
   async () => {
-    console.log("[worker] daily interest job triggered");
+    logJob("info", DAILY_INTEREST_JOB_TYPE, "job triggered");
     try {
       await runDailyInterestCatchUp(new Date());
-      console.log("[worker] daily interest job completed");
+      logJob("info", DAILY_INTEREST_JOB_TYPE, "job completed");
     } catch (error) {
-      console.error("[worker] daily interest job failed", error);
+      logJob("error", DAILY_INTEREST_JOB_TYPE, "job failed", { error: String(error) });
     }
   },
   { timezone: config.TIMEZONE },
@@ -45,12 +70,12 @@ cron.schedule(
 cron.schedule(
   "0 0 * * 6",
   async () => {
-    console.log("[worker] binary cycle job triggered");
+    logJob("info", BINARY_CYCLE_JOB_TYPE, "job triggered");
     try {
       await runBinaryCycleCatchUp(new Date());
-      console.log("[worker] binary cycle job completed");
+      logJob("info", BINARY_CYCLE_JOB_TYPE, "job completed");
     } catch (error) {
-      console.error("[worker] binary cycle job failed", error);
+      logJob("error", BINARY_CYCLE_JOB_TYPE, "job failed", { error: String(error) });
     }
   },
   { timezone: config.TIMEZONE },
@@ -69,12 +94,12 @@ cron.schedule(
 cron.schedule(
   "10 0 1 * *",
   async () => {
-    console.log("[worker] rank evaluation job triggered");
+    logJob("info", RANK_EVALUATION_JOB_TYPE, "job triggered");
     try {
       await runRankEvaluationCatchUp(new Date());
-      console.log("[worker] rank evaluation job completed");
+      logJob("info", RANK_EVALUATION_JOB_TYPE, "job completed");
     } catch (error) {
-      console.error("[worker] rank evaluation job failed", error);
+      logJob("error", RANK_EVALUATION_JOB_TYPE, "job failed", { error: String(error) });
     }
   },
   { timezone: config.TIMEZONE },
@@ -92,12 +117,12 @@ cron.schedule(
 cron.schedule(
   "0 0 * * 6",
   async () => {
-    console.log("[worker] rank payout job triggered");
+    logJob("info", RANK_PAYOUT_JOB_TYPE, "job triggered");
     try {
       await runRankPayoutCatchUp(new Date());
-      console.log("[worker] rank payout job completed");
+      logJob("info", RANK_PAYOUT_JOB_TYPE, "job completed");
     } catch (error) {
-      console.error("[worker] rank payout job failed", error);
+      logJob("error", RANK_PAYOUT_JOB_TYPE, "job failed", { error: String(error) });
     }
   },
   { timezone: config.TIMEZONE },
@@ -117,21 +142,22 @@ cron.schedule(
 cron.schedule(
   "20 0 * * *",
   async () => {
-    console.log("[worker] reconciliation job triggered");
+    logJob("info", RECONCILIATION_JOB_TYPE, "job triggered");
     try {
       await runReconciliationCatchUp(new Date());
-      console.log("[worker] reconciliation job completed");
+      logJob("info", RECONCILIATION_JOB_TYPE, "job completed");
     } catch (error) {
-      console.error("[worker] reconciliation job failed", error);
+      logJob("error", RECONCILIATION_JOB_TYPE, "job failed", { error: String(error) });
     }
   },
   { timezone: config.TIMEZONE },
 );
 
-console.log(`[worker] started, daily interest job scheduled for 00:05 ${config.TIMEZONE}`);
-console.log(`[worker] binary cycle job scheduled for Saturday 00:00 ${config.TIMEZONE}`);
-console.log(`[worker] rank evaluation job scheduled for 00:10 on the 1st of each month ${config.TIMEZONE}`);
-console.log(`[worker] rank payout job scheduled for Saturday 00:00 ${config.TIMEZONE}`);
-console.log(`[worker] reconciliation job scheduled for 00:20 ${config.TIMEZONE}`);
+logJob("info", "worker", "started");
+logJob("info", DAILY_INTEREST_JOB_TYPE, `scheduled for 00:05 ${config.TIMEZONE}`);
+logJob("info", BINARY_CYCLE_JOB_TYPE, `scheduled for Saturday 00:00 ${config.TIMEZONE}`);
+logJob("info", RANK_EVALUATION_JOB_TYPE, `scheduled for 00:10 on the 1st of each month ${config.TIMEZONE}`);
+logJob("info", RANK_PAYOUT_JOB_TYPE, `scheduled for Saturday 00:00 ${config.TIMEZONE}`);
+logJob("info", RECONCILIATION_JOB_TYPE, `scheduled for 00:20 ${config.TIMEZONE}`);
 
 setInterval(() => {}, 1 << 30);
