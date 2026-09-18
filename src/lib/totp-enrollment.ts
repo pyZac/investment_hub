@@ -66,6 +66,52 @@ export async function confirmTotpEnrollment(
 }
 
 /**
+ * Session-scoped TOTP re-enrollment: for an already-authenticated admin who
+ * wants to switch to a new authenticator device/app, not the login-flow
+ * enrollment above (which is tied to a login pending-token and only reachable
+ * when no secret exists yet). Generates a new secret but does NOT persist it
+ * or touch the existing one until confirmReenrollment verifies a real code —
+ * same "prove you can generate a valid code before it's trusted" bar as
+ * first-time enrollment. No pending-auth token involved since the caller is
+ * already a verified session (invariant #9: the route wrapping this passes
+ * the session's own userId, never a client-supplied one).
+ */
+export function beginTotpReenrollment(accountEmail: string) {
+  const secret = generateTotpSecret();
+  return {
+    secret,
+    otpauthUri: totpOtpauthUri(secret, accountEmail),
+  };
+}
+
+/**
+ * Confirms re-enrollment: verifies a real code against the new (not yet
+ * persisted) secret, then overwrites the account's existing totpSecret in
+ * one step — the old secret stops working the instant this succeeds, so
+ * there's never a window where both the old and new secret are valid.
+ * Logged as TOTP_ENROLLED, same event type as first-time enrollment (this is
+ * a re-enrollment, not a distinct lifecycle event — the audit trail cares
+ * that a new secret took effect, not whether one existed before).
+ */
+export async function confirmTotpReenrollment(userId: string, secret: string, code: string, forDate: Date) {
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+
+  if (!verifyTotpCode(secret, code)) {
+    throw new Error("Invalid authentication code.");
+  }
+
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: userId },
+      data: { totpSecret: secret, totpEnrolledAt: forDate },
+    }),
+    prisma.securityEvent.create({
+      data: { type: "TOTP_ENROLLED", userId, email: user.email, detail: "Re-enrollment", createdAt: forDate },
+    }),
+  ]);
+}
+
+/**
  * Removes TOTP from an account. Requires the current code as proof of
  * possession — an admin can't be locked out by someone else disabling their
  * 2FA without the device. Logged as a security event either way (removal is

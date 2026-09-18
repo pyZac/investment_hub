@@ -1,60 +1,72 @@
-# Mobile responsiveness pass — post-phase editing session
+# Session: Logo fix verification + password show/hide + admin settings page
 
-Scope: visual/UX only. Zero logic, DB, or API changes. No new business rules.
+## FIX 1 — Logo mark missing in admin sidebar
+- [x] Investigated: source code was already correct (viewBox/size already fixed in a prior
+      commit). Root cause was a stale `next dev` compile in the running container —
+      confirmed via DOM inspection (was serving old `viewBox="0 0 1080 1080"`/`h-9 w-9`,
+      not the committed `313.48 336.47 453.06 407.11`/`h-16 w-16`).
+- [x] Restarted the `app` container; re-inspected DOM — now serving the correct/updated
+      SVG. No code change needed. Nothing to commit for this fix.
 
-## Step 1 — Shared responsive primitives (do first, unlocks everything else)
-- [ ] Build a reusable `<Table>` wrapper (`src/components/ui/data-table.tsx` or similar) that
-      wraps any table markup in `overflow-x-auto` with a min-width inner table, so every
-      existing raw `<table>` page gets horizontal scroll by wrapping, not rewriting.
-- [ ] Add a `<MobileNavSheet>` / hamburger trigger using existing `Dialog` primitive (no new
-      dependency) for admin sidebar collapse.
-- [ ] Establish the convention doc comment in the shared layouts so future pages inherit it
-      (per user's "future pages must inherit responsiveness" requirement).
+## FIX 2 — Password show/hide toggle (all password inputs)
+Files with `type="password"` inputs:
+- [ ] `src/components/login-form.tsx` (login password field)
+- [ ] `src/components/change-password-form.tsx` (current/new/confirm — 3 fields)
+- [ ] `src/app/[locale]/admin/users/create-user-form.tsx` (initial password field)
+- [ ] `src/app/[locale]/admin/sub-admins/create-sub-admin-form.tsx` (initial password field)
 
-## Step 2 — Admin shell (`src/app/[locale]/admin/layout.tsx` + `admin-sidebar-nav.tsx`)
-- [ ] Sidebar hidden below `lg:`, replaced with a top bar containing a hamburger button.
-- [ ] Hamburger opens the nav (Dialog/Sheet-style overlay) with the same `AdminSidebarNav`
-      links; closes on link click or overlay tap.
-- [ ] Keep desktop layout (`lg:flex` sidebar) unchanged visually.
-- [ ] Verify RTL: hamburger + overlay use logical positioning (`inset-inline-start`, not
-      `left-*`), matches bilingual-rtl skill.
+Plan: build one shared `<PasswordInput>` component (wraps existing `Input`, adds an
+eye/eye-off icon button toggling `type="password"`/`"text"`, 44px touch target per the
+mobile-responsiveness pass), then swap each of the above call sites to use it instead of a
+raw `<Input type="password">`. Zero backend change — purely a client-side UI toggle, no
+`.value` exposure change, no new prop threading into server actions.
 
-## Step 3 — User dashboard shell (`(app)/layout.tsx` + `dashboard-nav.tsx`)
-- [ ] Collapse `DashboardNav` into a hamburger on small screens (same pattern as admin).
-- [ ] Header row wraps/stacks correctly at 375–440px (logo, nav, language switcher, logout).
+## FIX 3 — Admin account settings page
+- [ ] Schema: add `EMAIL_CHANGED` to `SecurityEventType` enum (confirmed with user — matches
+      existing TOTP_ENROLLED/REMOVED audit pattern). One additive migration, no data change.
+- [ ] `src/lib/auth.ts`: add `updateAdminEmail(userId, input)`:
+  - Zod-validated new email, requires current password (same proof-of-identity bar as
+    `changePassword`), rejects if new email already in use (unique constraint + friendly
+    error, not a raw Prisma error leak), writes `SecurityEvent` (`EMAIL_CHANGED`) same
+    pattern as TOTP enroll/remove. Takes `userId` from the caller's own session only
+    (invariant #9 — never trust a client-supplied id).
+- [ ] `src/lib/totp-enrollment.ts` or new function: session-scoped TOTP **re-enrollment** for
+      an already-logged-in admin (existing `beginTotpEnrollment`/`confirmTotpEnrollment` are
+      pending-token/login-flow-scoped, not usable directly from an authenticated session).
+      Plan: add `beginTotpReenrollment(userId, forDate)` (generates new secret, returns
+      otpauth URI, does NOT persist yet — mirrors `beginTotpEnrollment`'s shape minus the
+      pending-token machinery) and `confirmTotpReenrollment(userId, secret, code, forDate)`
+      (verifies code, persists, logs TOTP_ENROLLED — reuses `removeTotp`'s require-current
+      -code pattern is NOT needed here since re-enrollment always starts by generating a
+      brand new secret, same trust level as first-time enrollment via a live session).
+- [ ] New API routes: `POST /api/admin/update-email`, reuse `/api/auth/change-password` as
+      -is for password, new `POST /api/admin/totp/reenroll/begin` +
+      `POST /api/admin/totp/reenroll/confirm`. All gated by `requireSession` +
+      `isMainAdmin` check (main-admin-only page per FIX 3's wording).
+- [ ] New page: `src/app/[locale]/admin/settings/page.tsx`, gated by
+      `requireMainAdminOrRedirect` (matches sub-admin-management's own gating pattern).
+      Sections: change email, change password (reuse `ChangePasswordForm`), re-enroll TOTP
+      (new client component with QR code + confirm code input, mirrors the login-flow
+      enrollment UI in `login-form.tsx`).
+- [ ] Add sidebar link: `src/components/admin-sidebar-nav.tsx` — new nav item, translated
+      label, only shown to... (nav shows all links regardless of permission today per its
+      own comment; page itself gates via `requireMainAdminOrRedirect`, consistent with
+      existing pattern for sub-admins page).
+- [ ] Translations: add EN/AR strings for the new page + nav label.
 
-## Step 4 — Apply table-scroll wrapper to all 14 files with raw `<table>`
-security-events, ledger, job-monitor, manual-adjustment, rank-config (x2), commission-config,
-interest-rate, packages, credits, withdrawals (x2), users, sub-admins.
+## Tests
+- [ ] `src/lib/auth.test.ts`: tests for `updateAdminEmail` — success, wrong current password,
+      duplicate email, non-existent user.
+- [ ] `src/lib/totp-enrollment.test.ts` (or new file): tests for re-enrollment begin/confirm
+      — success path, wrong code, old secret invalidated after new one confirmed.
 
-## Step 5 — Page-by-page pass for cards/forms stacking + no text cutoff
-User: /login, /dashboard, /binary-tree, /referrals, /withdrawals, /transactions,
-/dashboard/profile.
-Admin: /admin/users, /admin/sub-admins, /admin/withdrawals, /admin/credits, /admin/packages,
-/admin/interest-rate, /admin/commission-config, /admin/rank-config, /admin/manual-adjustment,
-/admin/job-monitor, /admin/solvency, /admin/ledger, /admin/security-events.
-- Grids → `grid-cols-1` base, expand at `sm:`/`lg:`.
-- Forms → stack fields full-width on mobile.
-- Ensure touch targets (buttons, nav links) are >= 44px on mobile.
+## Verification
+- [ ] `npx tsc --noEmit` clean.
+- [ ] Full test suite run (background, sequential per project convention).
+- [ ] Manual check: settings page renders, main-admin-only gating works (sub-admin
+      redirected), password toggle works on all 4 password fields, EN+AR.
 
-## Step 6 — RTL check on mobile
-Spot-check /ar at 375px for at least: admin layout, dashboard layout, one table page, one form
-page — confirm hamburger and overlay mirror correctly.
-
-## Step 7 — Verification
-- [x] `npx tsc --noEmit` clean.
-- [x] Run existing automated test suite. 2 pre-existing failures found
-      (`reconciliation.test.ts`, `phase-4-exit-test.test.ts`), both whole-DB solvency
-      checks — confirmed via `git diff --stat` (zero `src/lib/*`/schema files touched this
-      session) and by reproducing `reconciliation.test.ts` standalone (same drift, not a
-      full-suite race). Root cause: pre-existing ~27.34 unit drift in the shared dev DB,
-      unrelated to this visual-only session. Flagged to user, not repaired (out of scope for
-      a zero-logic-change session; repairing wallet/ledger drift is a money-precision-skill
-      task, not a CSS one).
-- [~] Manual resize check at 375/440/768px: blocked for authenticated pages by TOTP 2FA
-      (correctly enforced) — user chose code-review verification over minting a bypass
-      session. Verified via Tailwind class audit (Explore agent) + fixed 2 real bugs found
-      (touch targets on 5 clear-buttons, text-cutoff risk in reversal-confirm-dialog) + fixed
-      1 self-introduced RTL bug (physical `left-0`/`top-0` in MobileNavSheet → `inset-0`).
-      Login page screenshotted successfully at all 3 widths, EN+AR — clean.
-- [x] Reported back after each major section.
+## Commit + push
+- [ ] Commit (exclude `docker-compose.yml` — standing instruction, still local-only for
+      DISABLE_ADMIN_TOTP dev convenience).
+- [ ] Push to main.

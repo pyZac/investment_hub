@@ -70,6 +70,70 @@ export async function login(
   };
 }
 
+export class IncorrectPasswordError extends Error {
+  constructor() {
+    super("Current password is incorrect.");
+    this.name = "IncorrectPasswordError";
+  }
+}
+
+export class EmailAlreadyInUseError extends Error {
+  constructor() {
+    super("This email address is already in use.");
+    this.name = "EmailAlreadyInUseError";
+  }
+}
+
+const updateAdminEmailInputSchema = z.object({
+  currentPassword: z.string().min(1),
+  newEmail: z.email(),
+});
+
+/**
+ * Self-service email change for an already-authenticated admin (invariant
+ * #9: caller must pass the requesting session's own userId, never a
+ * client-supplied one) — same proof-of-identity bar as changePassword
+ * (current password required). Rejects a new email already in use by
+ * another account with a clean, user-facing error rather than letting the
+ * DB's unique-constraint error leak through. Logged as a SecurityEvent
+ * (EMAIL_CHANGED), matching how TOTP enroll/remove are audited.
+ */
+export async function updateAdminEmail(
+  userId: string,
+  input: z.infer<typeof updateAdminEmailInputSchema>,
+  forDate: Date,
+): Promise<void> {
+  const data = updateAdminEmailInputSchema.parse(input);
+
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+  const valid = await verifyPassword(user.passwordHash, data.currentPassword);
+  if (!valid) {
+    throw new IncorrectPasswordError();
+  }
+
+  if (data.newEmail === user.email) {
+    return;
+  }
+
+  const existing = await prisma.user.findUnique({ where: { email: data.newEmail } });
+  if (existing) {
+    throw new EmailAlreadyInUseError();
+  }
+
+  await prisma.$transaction([
+    prisma.user.update({ where: { id: userId }, data: { email: data.newEmail } }),
+    prisma.securityEvent.create({
+      data: {
+        type: "EMAIL_CHANGED",
+        userId,
+        email: user.email,
+        detail: `Changed to ${data.newEmail}`,
+        createdAt: forDate,
+      },
+    }),
+  ]);
+}
+
 const changePasswordInputSchema = z.object({
   currentPassword: z.string().min(1),
   newPassword: z.string().min(8),

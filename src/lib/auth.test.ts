@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { prisma } from "./prisma";
 import { hashPassword, verifyPassword } from "./password";
-import { login, changePassword } from "./auth";
+import { login, changePassword, updateAdminEmail } from "./auth";
 import { validateAndTouchSession } from "./session";
 
 const createdUserIds: string[] = [];
@@ -97,6 +97,69 @@ describe("changePassword", () => {
     await expect(
       changePassword(user.id, { currentPassword: "correct-password", newPassword: "short" }),
     ).rejects.toThrow();
+  });
+});
+
+describe("updateAdminEmail", () => {
+  it("changes the email when the current password is correct and the new email is free", async () => {
+    const user = await makeUser();
+    const newEmail = `changed-${crypto.randomUUID()}@test.local`;
+
+    await updateAdminEmail(user.id, { currentPassword: "correct-password", newEmail }, new Date());
+
+    const updated = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(updated.email).toBe(newEmail);
+  });
+
+  it("logs an EMAIL_CHANGED security event under the account's original email", async () => {
+    const user = await makeUser();
+    const newEmail = `changed-${crypto.randomUUID()}@test.local`;
+    const now = new Date();
+
+    await updateAdminEmail(user.id, { currentPassword: "correct-password", newEmail }, now);
+
+    const event = await prisma.securityEvent.findFirst({
+      where: { type: "EMAIL_CHANGED", userId: user.id, email: user.email },
+    });
+    expect(event).not.toBeNull();
+    expect(event?.detail).toContain(newEmail);
+  });
+
+  it("rejects an incorrect current password and leaves the email unchanged", async () => {
+    const user = await makeUser();
+    await expect(
+      updateAdminEmail(
+        user.id,
+        { currentPassword: "wrong-password", newEmail: `changed-${crypto.randomUUID()}@test.local` },
+        new Date(),
+      ),
+    ).rejects.toThrow(/current password is incorrect/i);
+
+    const unchanged = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(unchanged.email).toBe(user.email);
+  });
+
+  it("rejects a new email already in use by another account", async () => {
+    const user = await makeUser();
+    const other = await makeUser();
+
+    await expect(
+      updateAdminEmail(user.id, { currentPassword: "correct-password", newEmail: other.email }, new Date()),
+    ).rejects.toThrow(/already in use/i);
+
+    const unchanged = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(unchanged.email).toBe(user.email);
+  });
+
+  it("is a no-op (no error, no duplicate security event) when the new email equals the current one", async () => {
+    const user = await makeUser();
+
+    await updateAdminEmail(user.id, { currentPassword: "correct-password", newEmail: user.email }, new Date());
+
+    const event = await prisma.securityEvent.findFirst({
+      where: { type: "EMAIL_CHANGED", userId: user.id },
+    });
+    expect(event).toBeNull();
   });
 });
 

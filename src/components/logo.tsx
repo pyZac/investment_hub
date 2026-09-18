@@ -1,3 +1,6 @@
+"use client";
+
+import { useId } from "react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -24,6 +27,20 @@ import { cn } from "@/lib/utils";
 const MARK_VIEWBOX = "313.48 336.47 453.06 407.11";
 
 function LogoMarkSvg({ className }: { className?: string }) {
+  // Gradient <defs> ids must be unique per rendered <svg> — a page that
+  // renders LogoMark/LogoFull twice at once (e.g. the admin layout's
+  // desktop sidebar + CSS-hidden mobile top-bar copy, both present in the
+  // DOM simultaneously) previously shared the same hardcoded ids, so every
+  // fill="url(#id)" resolved to whichever instance's <linearGradient>
+  // happened to register first — the other instance rendered with an
+  // invalid/empty fill and appeared completely missing. useId() scopes
+  // these ids per component instance, safe under SSR/hydration.
+  const uid = useId();
+  const legGradientId = `investaLegGradient-${uid}`;
+  const legGradientRightId = `investaLegGradientRight-${uid}`;
+  const crossbarGradientId = `investaCrossbarGradient-${uid}`;
+  const crossbarFadeGradientId = `investaCrossbarFadeGradient-${uid}`;
+
   return (
     <svg
       viewBox={MARK_VIEWBOX}
@@ -35,7 +52,7 @@ function LogoMarkSvg({ className }: { className?: string }) {
     >
       <defs>
         <linearGradient
-          id="investaLegGradient"
+          id={legGradientId}
           x1="635.22"
           y1="739.67"
           x2="503.38"
@@ -47,7 +64,7 @@ function LogoMarkSvg({ className }: { className?: string }) {
           <stop offset="1" stopColor="#289B88" />
         </linearGradient>
         <linearGradient
-          id="investaLegGradientRight"
+          id={legGradientRightId}
           x1="506.92"
           y1="391.95"
           x2="768.49"
@@ -59,7 +76,7 @@ function LogoMarkSvg({ className }: { className?: string }) {
           <stop offset="1" stopColor="#289B88" />
         </linearGradient>
         <linearGradient
-          id="investaCrossbarGradient"
+          id={crossbarGradientId}
           x1="496.43"
           y1="420.34"
           x2="381.47"
@@ -71,7 +88,7 @@ function LogoMarkSvg({ className }: { className?: string }) {
           <stop offset="1" stopColor="#289B88" />
         </linearGradient>
         <linearGradient
-          id="investaCrossbarFadeGradient"
+          id={crossbarFadeGradientId}
           x1="429.28"
           y1="556.87"
           x2="562.18"
@@ -86,22 +103,22 @@ function LogoMarkSvg({ className }: { className?: string }) {
       {/* Left leg: a folded ribbon running from bottom-left to the peak */}
       <path
         d="M632.72,719.3H571a19.09,19.09,0,0,1-17.23-10.85L533,665a16.78,16.78,0,0,0-15.13-9.53H476.31L502.39,601v0l4.33-9a20,20,0,0,1,18-11.36h22.83a29.77,29.77,0,0,1,26.86,16.93l27.74,58Z"
-        fill="url(#investaLegGradient)"
+        fill={`url(#${legGradientId})`}
       />
       {/* Right leg */}
       <path
         d="M734.08,719.3H685.16a18.77,18.77,0,0,1-16.95-10.67l-25.43-53.14-35.84-74.88-47.39-99L544.43,450s0,0,0-.06L540,440.74l-35.9-75a20.55,20.55,0,0,1,13.48-5h44.8A20.65,20.65,0,0,1,581,372.45q7.68,16.07,15.37,32.13,42.12,88,84.25,176l35.84,74.88,25,52.1A8.19,8.19,0,0,1,734.08,719.3Z"
-        fill="url(#investaLegGradientRight)"
+        fill={`url(#${legGradientRightId})`}
       />
       {/* Crossbar: a detached rounded ribbon piece with a stepped notch, not a plain bar */}
       <path
         d="M544.39,449.92a4.9,4.9,0,0,0-8.8.06L519.7,483.17l-36.86,77-9.78,20.45-35.84,74.88-25.43,53.14a18.77,18.77,0,0,1-17,10.67H345.92a8.19,8.19,0,0,1-7.37-11.71l25-52.1,35.84-74.88L446,483.15l36.86-77q8.07-16.85,16.13-33.71c0-.09.09-.15.13-.24a19.94,19.94,0,0,1,5-6.48l35.9,75Z"
-        fill="url(#investaCrossbarGradient)"
+        fill={`url(#${crossbarGradientId})`}
       />
       {/* Soft fade overlay on the crossbar, matching the source artwork's shading */}
       <path
         d="M544.39,449.92a4.9,4.9,0,0,0-8.8.06L519.7,483.17l-36.86,77-9.78,20.45-35.84,74.88-25.43,53.14a18.77,18.77,0,0,1-17,10.67H345.92a8.19,8.19,0,0,1-7.37-11.71l25-52.1,35.84-74.88L446,483.15l36.86-77q8.07-16.85,16.13-33.71c0-.09.09-.15.13-.24a19.94,19.94,0,0,1,5-6.48l35.9,75Z"
-        fill="url(#investaCrossbarFadeGradient)"
+        fill={`url(#${crossbarFadeGradientId})`}
       />
     </svg>
   );
@@ -120,9 +137,12 @@ export function LogoMark({ className }: { className?: string }) {
  * The tagline text itself is caller-supplied (`taglineText`), not hardcoded
  * here — "SMART INVESTMENTS • REAL WEALTH" is marketing copy, not a brand
  * name like "INVESTA", so it must go through next-intl at the call site.
- * This component stays a plain Server Component with no i18n dependency of
- * its own; passing no `taglineText` while `tagline` is true simply renders
- * no tagline line (used by non-localized scaffolding contexts).
+ * This component has no i18n dependency of its own; passing no
+ * `taglineText` while `tagline` is true simply renders no tagline line
+ * (used by non-localized scaffolding contexts). It's a Client Component
+ * (see the file-level "use client") only because LogoMarkSvg needs
+ * useId() for unique gradient ids — it renders identically either way and
+ * is still safely called from Server Component layouts/pages.
  */
 const LOGO_FULL_MARK_SIZE = {
   default: "h-16 w-16",

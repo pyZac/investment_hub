@@ -1525,3 +1525,71 @@ multi-screen phase must be "build the layout/nav shell for this area,"
 scaffolded with placeholder/empty screens if needed to prove the shell
 works, before any real screen's business logic is built — not bolted on
 afterward once all the screens already exist.
+
+## 2026-09-18 — post-phase editing session (admin settings page, EMAIL_CHANGED enum)
+Mistake: adding a single new `SecurityEventType` enum value via `npx prisma
+migrate dev --name add_email_changed_security_event` generated a migration
+that included an unrelated, unintended second change: it dropped and
+recreated `binary_nodes_parent_id_fkey` with `ON DELETE SET NULL` instead of
+its original, deliberate `ON DELETE RESTRICT` (set in
+`20260821130000_add_binary_nodes`). Root cause: `schema.prisma`'s `parent
+BinaryNode? @relation("BinaryTree", fields: [parentId], references:
+[userId])` never declared `onDelete` explicitly — Prisma's implicit default
+for an optional scalar relation is `SetNull`, which differed from what the
+live DB actually had (`RESTRICT`, applied by hand in the original migration
+but never mirrored back into an explicit schema annotation). `migrate dev`
+diffs the live DB against the schema and silently "fixes" any such
+drift — in this case in the wrong direction, weakening invariant #7 (no
+hard delete on users) by letting a deleted node orphan its children instead
+of blocking the delete. Caught only because the generated migration.sql was
+read line-by-line before trusting the CLI's "up to date" success message,
+not because of any test failure or warning.
+Rule: **after running any `prisma migrate dev`, always read the generated
+`migration.sql` in full before considering the migration done — a migration
+intended to add ONE thing can silently include unrelated DDL for any
+existing field lacking an explicit relation attribute the schema currently
+defaults differently from the live DB.** Any FK with non-default delete
+behavior (anything other than Prisma's implicit default) must have its
+`onDelete` written explicitly in `schema.prisma`, never left to infer
+correctly by coincidence — this makes future diffs deterministic instead of
+dependent on what the live DB happens to already have. Fixed here by (1)
+adding `onDelete: Restrict` explicitly with a comment explaining why, and
+(2) a second corrective migration
+(`20260918194405_restore_binary_nodes_parent_restrict`) restoring `RESTRICT`
+on the live DB before continuing with the actually-intended `EMAIL_CHANGED`
+work.
+
+## 2026-09-18 — post-phase editing session (admin settings page)
+Mistake: none in new code this time, but a real latent bug in
+`src/components/logo.tsx` (shared by every page, untouched by this
+session's actual edits) was exposed and fixed. `LogoMarkSvg`'s `<defs>`
+used hardcoded gradient `id`s (`investaLegGradient`, etc.). This was
+harmless as long as at most one `<LogoMark>`/`<LogoFull>` instance ever
+rendered per page — true everywhere until a prior session's admin-layout
+mobile-nav work (`src/app/[locale]/admin/layout.tsx`) added a second,
+simultaneously-DOM-present logo instance (desktop `<aside>` sidebar +
+`lg:hidden` mobile top-bar), both defining `id="investaLegGradient"` etc.
+SVG `fill="url(#id)"` resolves against the *whole document*, not scoped to
+the local `<svg>` — with two elements sharing an id, one instance's
+`<linearGradient>` definitions won and the other rendered with a broken/
+empty fill, i.e. the mark appeared completely invisible on that page.
+Confirmed via `document.querySelectorAll('[id="investaLegGradient"]').length
+=== 2` on the live admin page, not by guessing — a DOM inspection that
+directly confirmed correct `viewBox`/size/path-count on the "invisible"
+`<svg>` element had already ruled out every other plausible cause (stale
+compile, wrong classes, CSS visibility) before this was found.
+Rule: **any SVG component that might ever render more than once
+simultaneously on the same page must scope its internal `<defs>` ids per
+instance** (`React.useId()`, prefixed onto each id) — a hardcoded literal
+id inside reusable SVG markup is a latent bug from the moment the component
+is written, not just from the moment a second instance actually appears;
+it's invisible in isolation and in every render that only ever mounts one
+copy, so normal review/testing won't catch it until something later
+(intentionally or not) puts two on the page at once. When a component
+renders correct markup/attributes by every DOM-level check yet is visually
+absent, check for id collisions across the whole document before assuming
+a compile/cache/CSS cause — `fill="url(#foo)"`/`clip-path="url(#foo)"`/etc.
+are exactly this failure's fingerprint. Fixed by making `logo.tsx`
+(previously a plain Server Component) a Client Component so `useId()` is
+available, confirmed safe since none of its 4 call sites pass server-only
+data through it.

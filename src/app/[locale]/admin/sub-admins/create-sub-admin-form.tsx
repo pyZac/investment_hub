@@ -6,6 +6,7 @@ import type { AdminPermission } from "@prisma/client";
 import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { createSubAdminAction, type SubAdminActionErrorKey } from "./actions";
 
@@ -25,6 +26,7 @@ const PERMISSION_CATALOG: AdminPermission[] = [
 
 export function CreateSubAdminForm({ locale }: { locale: string }) {
   const t = useTranslations("AdminSubAdmins");
+  const tCommon = useTranslations("Common");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -87,13 +89,13 @@ export function CreateSubAdminForm({ locale }: { locale: string }) {
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="subadmin-password">{t("passwordLabel")}</Label>
-          <Input
+          <PasswordInput
             id="subadmin-password"
-            type="password"
             minLength={8}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
+            toggleLabel={{ show: tCommon("showPassword"), hide: tCommon("hidePassword") }}
           />
         </div>
         <div className="space-y-1.5">

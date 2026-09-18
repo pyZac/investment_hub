@@ -4,6 +4,10 @@
     "en": "English",
     "ar": "Arabic"
   },
+  "Common": {
+    "showPassword": "Show password",
+    "hidePassword": "Hide password"
+  },
   "NotFound": {
     "title": "Page not found",
     "description": "The page you're looking for doesn't exist or has moved.",
@@ -297,6 +301,39 @@
     "errorCurrentPasswordIncorrect": "Your current password is incorrect.",
     "errorPasswordTooShort": "The new password must be at least 8 characters.",
     "errorPasswordMismatch": "The new password and confirmation do not match.",
+    "errorGeneric": "Something went wrong. Please try again."
+  },
+  "AdminSettings": {
+    "pageTitle": "Settings",
+    "pageDescription": "Manage your main admin account: email, password, and two-factor authentication.",
+
+    "emailHeading": "Change email",
+    "emailDescription": "Your current password is required to confirm this change.",
+    "emailLabel": "New email",
+    "emailCurrentPasswordLabel": "Current password",
+    "emailSubmit": "Change email",
+    "emailSubmitting": "Changing email…",
+    "emailSuccessMessage": "Your email has been changed.",
+
+    "changePasswordHeading": "Change password",
+    "changePasswordDescription": "Choose a new password with at least 8 characters.",
+
+    "totpHeading": "Two-factor authentication",
+    "totpDescription": "Re-enrolling replaces your current authenticator device — the old one stops working immediately once you confirm the new code.",
+    "totpReenrollButton": "Re-enroll authenticator",
+    "totpLoading": "Preparing two-factor setup…",
+    "totpScanInstruction": "Scan this QR code with your authenticator app (e.g. Google Authenticator, Authy), then enter the 6-digit code it shows.",
+    "totpManualEntryLabel": "Or enter this code manually",
+    "totpCodeLabel": "Authentication code",
+    "totpCodePlaceholder": "000000",
+    "totpSubmit": "Confirm re-enrollment",
+    "totpSubmitting": "Confirming…",
+    "totpCancel": "Cancel",
+    "totpSuccessMessage": "Your authenticator has been re-enrolled.",
+
+    "errorEmailInUse": "This email address is already in use.",
+    "errorIncorrectPassword": "Your current password is incorrect.",
+    "errorInvalidCode": "Invalid authentication code.",
     "errorGeneric": "Something went wrong. Please try again."
   },
   "AdminSubAdmins": {
@@ -817,7 +854,8 @@
     "jobMonitor": "Job Monitor",
     "solvency": "Solvency",
     "ledger": "Ledger",
-    "securityEvents": "Security Events"
+    "securityEvents": "Security Events",
+    "settings": "Settings"
   },
   "AdminJobMonitor": {
     "pageTitle": "Job Monitor",

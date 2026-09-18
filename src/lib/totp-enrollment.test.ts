@@ -3,7 +3,13 @@ import * as OTPAuth from "otpauth";
 import { prisma } from "./prisma";
 import { hashPassword } from "./password";
 import { login, verifyTotpAndCreateSession } from "./auth";
-import { beginTotpEnrollment, confirmTotpEnrollment, removeTotp } from "./totp-enrollment";
+import {
+  beginTotpEnrollment,
+  confirmTotpEnrollment,
+  beginTotpReenrollment,
+  confirmTotpReenrollment,
+  removeTotp,
+} from "./totp-enrollment";
 import { validateAndTouchSession } from "./session";
 
 const createdUserIds: string[] = [];
@@ -199,6 +205,68 @@ describe("verifyTotpAndCreateSession", () => {
     await expect(
       verifyTotpAndCreateSession(loginResult.pendingToken, codeFor(secret), now, uniqueIp()),
     ).rejects.toThrow(/expired/i);
+  });
+});
+
+describe("TOTP re-enrollment (session-scoped, not the login-flow enrollment)", () => {
+  it("full flow: begin -> confirm -> new secret persisted, old secret stops working", async () => {
+    const oldSecret = "JBSWY3DPEHPK3PXP";
+    const admin = await makeAdmin({ totpSecret: oldSecret });
+    const now = new Date();
+
+    const { secret: newSecret, otpauthUri } = beginTotpReenrollment(admin.email);
+    expect(otpauthUri).toContain(newSecret);
+    expect(newSecret).not.toBe(oldSecret);
+
+    await confirmTotpReenrollment(admin.id, newSecret, codeFor(newSecret), now);
+
+    const updated = await prisma.user.findUniqueOrThrow({ where: { id: admin.id } });
+    expect(updated.totpSecret).toBe(newSecret);
+    expect(updated.totpEnrolledAt).not.toBeNull();
+
+    // The old secret's code no longer matches what's stored.
+    expect(updated.totpSecret).not.toBe(oldSecret);
+  });
+
+  it("logs a TOTP_ENROLLED security event on successful re-enrollment", async () => {
+    const admin = await makeAdmin({ totpSecret: "JBSWY3DPEHPK3PXP" });
+    const now = new Date();
+
+    const { secret } = beginTotpReenrollment(admin.email);
+    await confirmTotpReenrollment(admin.id, secret, codeFor(secret), now);
+
+    const event = await prisma.securityEvent.findFirst({
+      where: { type: "TOTP_ENROLLED", userId: admin.id },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(event).not.toBeNull();
+    expect(event?.detail).toBe("Re-enrollment");
+  });
+
+  it("rejects confirmation with a wrong code and leaves the original secret intact", async () => {
+    const originalSecret = "JBSWY3DPEHPK3PXP";
+    const admin = await makeAdmin({ totpSecret: originalSecret });
+    const now = new Date();
+
+    const { secret: newSecret } = beginTotpReenrollment(admin.email);
+
+    await expect(
+      confirmTotpReenrollment(admin.id, newSecret, "000000", now),
+    ).rejects.toThrow(/invalid authentication code/i);
+
+    const unchanged = await prisma.user.findUniqueOrThrow({ where: { id: admin.id } });
+    expect(unchanged.totpSecret).toBe(originalSecret);
+  });
+
+  it("works for an admin with no prior TOTP enrollment (first enrollment via this path too)", async () => {
+    const admin = await makeAdmin();
+    const now = new Date();
+
+    const { secret } = beginTotpReenrollment(admin.email);
+    await confirmTotpReenrollment(admin.id, secret, codeFor(secret), now);
+
+    const updated = await prisma.user.findUniqueOrThrow({ where: { id: admin.id } });
+    expect(updated.totpSecret).toBe(secret);
   });
 });
 

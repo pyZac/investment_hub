@@ -5,12 +5,14 @@ import { useTranslations } from "next-intl";
 import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { createUserAction, type UserManagementActionErrorKey } from "./actions";
 import { SponsorPicker } from "./sponsor-picker";
 
 export function CreateUserForm({ locale }: { locale: string }) {
   const t = useTranslations("AdminUsers");
+  const tCommon = useTranslations("Common");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -55,13 +57,13 @@ export function CreateUserForm({ locale }: { locale: string }) {
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="user-password">{t("passwordLabel")}</Label>
-          <Input
+          <PasswordInput
             id="user-password"
-            type="password"
             minLength={8}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
+            toggleLabel={{ show: tCommon("showPassword"), hide: tCommon("hidePassword") }}
           />
         </div>
         <div className="space-y-1.5">

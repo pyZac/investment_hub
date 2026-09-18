@@ -43,6 +43,7 @@ export const SECURITY_EVENT_TYPE_LABELS: Record<SecurityEventType, string> = {
   TOTP_ENROLLED: "2FA Enrolled",
   TOTP_REMOVED: "2FA Removed",
   TOTP_FAILED: "2FA Failed",
+  EMAIL_CHANGED: "Email Changed",
 };
 
 /**

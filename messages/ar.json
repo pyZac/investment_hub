@@ -4,6 +4,10 @@
     "en": "English",
     "ar": "Arabic"
   },
+  "Common": {
+    "showPassword": "إظهار كلمة المرور",
+    "hidePassword": "إخفاء كلمة المرور"
+  },
   "NotFound": {
     "title": "الصفحة غير موجودة",
     "description": "الصفحة التي تبحث عنها غير موجودة أو تم نقلها.",
@@ -297,6 +301,39 @@
     "errorCurrentPasswordIncorrect": "كلمة المرور الحالية غير صحيحة.",
     "errorPasswordTooShort": "يجب أن تتكون كلمة المرور الجديدة من 8 أحرف على الأقل.",
     "errorPasswordMismatch": "كلمة المرور الجديدة والتأكيد غير متطابقين.",
+    "errorGeneric": "حدث خطأ ما. الرجاء المحاولة مرة أخرى."
+  },
+  "AdminSettings": {
+    "pageTitle": "الإعدادات",
+    "pageDescription": "إدارة حساب Main Admin الخاص بك: البريد الإلكتروني، كلمة المرور، والمصادقة الثنائية.",
+
+    "emailHeading": "تغيير البريد الإلكتروني",
+    "emailDescription": "كلمة المرور الحالية مطلوبة لتأكيد هذا التغيير.",
+    "emailLabel": "البريد الإلكتروني الجديد",
+    "emailCurrentPasswordLabel": "كلمة المرور الحالية",
+    "emailSubmit": "تغيير البريد الإلكتروني",
+    "emailSubmitting": "جارٍ تغيير البريد الإلكتروني…",
+    "emailSuccessMessage": "تم تغيير بريدك الإلكتروني.",
+
+    "changePasswordHeading": "تغيير كلمة المرور",
+    "changePasswordDescription": "اختر كلمة مرور جديدة مكوّنة من 8 أحرف على الأقل.",
+
+    "totpHeading": "المصادقة الثنائية",
+    "totpDescription": "إعادة التسجيل تستبدل جهاز المصادقة الحالي الخاص بك — يتوقف الجهاز القديم عن العمل فور تأكيد الرمز الجديد.",
+    "totpReenrollButton": "إعادة تسجيل جهاز المصادقة",
+    "totpLoading": "جارٍ تجهيز إعداد المصادقة الثنائية…",
+    "totpScanInstruction": "امسح رمز QR هذا باستخدام تطبيق المصادقة الخاص بك (مثل Google Authenticator أو Authy)، ثم أدخل الرمز المكوّن من 6 أرقام الذي يظهر.",
+    "totpManualEntryLabel": "أو أدخل هذا الرمز يدويًا",
+    "totpCodeLabel": "رمز المصادقة",
+    "totpCodePlaceholder": "000000",
+    "totpSubmit": "تأكيد إعادة التسجيل",
+    "totpSubmitting": "جارٍ التأكيد…",
+    "totpCancel": "إلغاء",
+    "totpSuccessMessage": "تمت إعادة تسجيل جهاز المصادقة الخاص بك.",
+
+    "errorEmailInUse": "هذا البريد الإلكتروني مستخدم بالفعل.",
+    "errorIncorrectPassword": "كلمة المرور الحالية غير صحيحة.",
+    "errorInvalidCode": "رمز المصادقة غير صحيح.",
     "errorGeneric": "حدث خطأ ما. الرجاء المحاولة مرة أخرى."
   },
   "AdminSubAdmins": {
@@ -817,7 +854,8 @@
     "jobMonitor": "مراقبة المهام",
     "solvency": "الملاءة المالية",
     "ledger": "السجل",
-    "securityEvents": "الأحداث الأمنية"
+    "securityEvents": "الأحداث الأمنية",
+    "settings": "الإعدادات"
   },
   "AdminJobMonitor": {
     "pageTitle": "مراقبة المهام",

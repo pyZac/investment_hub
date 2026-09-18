@@ -4,13 +4,14 @@ import { useState, type FormEvent } from "react";
 import { useTranslations } from "next-intl";
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 
 type ChangePasswordResponse = { ok: true } | { error: string };
 
 export function ChangePasswordForm() {
   const t = useTranslations("Profile");
+  const tCommon = useTranslations("Common");
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -83,45 +84,45 @@ export function ChangePasswordForm() {
 
       <div className="space-y-2">
         <Label htmlFor="current-password">{t("currentPasswordLabel")}</Label>
-        <Input
+        <PasswordInput
           id="current-password"
           name="currentPassword"
-          type="password"
           autoComplete="current-password"
           required
           value={currentPassword}
           onChange={(e) => setCurrentPassword(e.target.value)}
           className="h-11"
+          toggleLabel={{ show: tCommon("showPassword"), hide: tCommon("hidePassword") }}
         />
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="new-password">{t("newPasswordLabel")}</Label>
-        <Input
+        <PasswordInput
           id="new-password"
           name="newPassword"
-          type="password"
           autoComplete="new-password"
           required
           minLength={8}
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
           className="h-11"
+          toggleLabel={{ show: tCommon("showPassword"), hide: tCommon("hidePassword") }}
         />
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="confirm-password">{t("confirmPasswordLabel")}</Label>
-        <Input
+        <PasswordInput
           id="confirm-password"
           name="confirmPassword"
-          type="password"
           autoComplete="new-password"
           required
           minLength={8}
           value={confirmPassword}
           onChange={(e) => setConfirmPassword(e.target.value)}
           className="h-11"
+          toggleLabel={{ show: tCommon("showPassword"), hide: tCommon("hidePassword") }}
         />
       </div>
 

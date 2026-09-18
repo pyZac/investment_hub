@@ -7,6 +7,7 @@ import { AlertCircle, Loader2 } from "lucide-react";
 import { useRouter } from "@/i18n/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 
 type LoginResponse =
@@ -51,6 +52,7 @@ function postLoginDestination(role: string, redirectTo: string): string {
  */
 export function LoginForm({ redirectTo }: { redirectTo: string }) {
   const t = useTranslations("Login");
+  const tCommon = useTranslations("Common");
   const router = useRouter();
 
   const [step, setStep] = useState<Step>({ kind: "credentials" });
@@ -386,16 +388,16 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
 
       <div className="space-y-2">
         <Label htmlFor="login-password">{t("passwordLabel")}</Label>
-        <Input
+        <PasswordInput
           id="login-password"
           name="password"
-          type="password"
           autoComplete="current-password"
           placeholder={t("passwordPlaceholder")}
           required
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           className="h-11"
+          toggleLabel={{ show: tCommon("showPassword"), hide: tCommon("hidePassword") }}
         />
       </div>
 

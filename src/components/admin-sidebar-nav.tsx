@@ -14,6 +14,7 @@ import {
   Scale,
   Receipt,
   ShieldAlert,
+  Settings,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/navigation";
@@ -33,6 +34,7 @@ const ADMIN_NAV_ITEMS = [
   { href: "/admin/solvency", labelKey: "solvency", icon: Scale },
   { href: "/admin/ledger", labelKey: "ledger", icon: Receipt },
   { href: "/admin/security-events", labelKey: "securityEvents", icon: ShieldAlert },
+  { href: "/admin/settings", labelKey: "settings", icon: Settings },
 ] as const;
 
 /**
