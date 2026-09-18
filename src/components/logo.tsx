@@ -12,7 +12,16 @@ import { cn } from "@/lib/utils";
  * `public/logo-full.svg`, `src/app/icon.svg`.
  */
 
-const MARK_VIEWBOX = "0 0 1080 1080";
+/**
+ * Cropped tight to the mark's actual glyph bounding box (traced via
+ * `getBBox()` against the raw path data — full box was x:337.75 y:360.74
+ * w:404.51 h:358.57 inside the original 0 0 1080 1080 canvas — plus ~6%
+ * padding), not the full 1080x1080 artboard. The original viewBox left the
+ * glyph occupying only ~37% of the box width, which read as tiny/unclear at
+ * favicon and small nav-icon sizes. `src/app/icon.svg` and
+ * `public/logo-mark.svg` use this same cropped viewBox — keep them in sync.
+ */
+const MARK_VIEWBOX = "313.48 336.47 453.06 407.11";
 
 function LogoMarkSvg({ className }: { className?: string }) {
   return (
@@ -116,8 +125,8 @@ export function LogoMark({ className }: { className?: string }) {
  * no tagline line (used by non-localized scaffolding contexts).
  */
 const LOGO_FULL_MARK_SIZE = {
-  default: "h-12 w-12",
-  lg: "h-20 w-20",
+  default: "h-16 w-16",
+  lg: "h-24 w-24",
 } as const;
 
 const LOGO_FULL_WORDMARK_SIZE = {

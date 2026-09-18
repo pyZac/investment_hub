@@ -21,7 +21,7 @@
     </linearGradient>
   </defs>
 
-  <g transform="translate(-320, -388) scale(0.055)">
+  <g transform="translate(-260.38, -186.02) scale(0.113)">
     <path
       d="M632.72,719.3H571a19.09,19.09,0,0,1-17.23-10.85L533,665a16.78,16.78,0,0,0-15.13-9.53H476.31L502.39,601v0l4.33-9a20,20,0,0,1,18-11.36h22.83a29.77,29.77,0,0,1,26.86,16.93l27.74,58Z"
       fill="url(#investaFullLegGradient)"
@@ -41,7 +41,7 @@
   </g>
 
   <text
-    x="66"
+    x="70"
     y="36"
     font-family="'Space Grotesk', 'Arial', sans-serif"
     font-size="20"
@@ -51,7 +51,7 @@
   >INVESTA</text>
 
   <text
-    x="66"
+    x="70"
     y="52"
     font-family="'Inter', 'Arial', sans-serif"
     font-size="10"
