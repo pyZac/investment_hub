@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
 import { getTranslations } from "next-intl/server";
 import { LanguageSwitcher } from "@/components/language-switcher";
-import { LogoFull } from "@/components/logo";
+import { LogoFull, LogoMark } from "@/components/logo";
 import { LogoutButton } from "@/components/logout-button";
 import { AdminSidebarNav } from "@/components/admin-sidebar-nav";
+import { MobileNavSheet } from "@/components/mobile-nav-sheet";
 import { Link } from "@/i18n/navigation";
 
 /**
@@ -20,8 +21,24 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   const t = await getTranslations("AdminNav");
 
   return (
-    <div className="flex min-h-full flex-1 flex-row">
-      <aside className="flex w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground">
+    <div className="flex min-h-full flex-1 flex-col lg:flex-row">
+      {/* Mobile top bar: hamburger + wordmark only, shown below `lg:`. The
+       * full sidebar (nav) is unreachable below `lg:` except through the
+       * MobileNavSheet overlay, which renders the same AdminSidebarNav. */}
+      <div className="flex shrink-0 flex-row items-center justify-between border-b border-sidebar-border bg-sidebar px-4 py-3 text-sidebar-foreground lg:hidden">
+        <Link href="/admin/users" className="flex shrink-0 items-center">
+          <LogoMark className="h-7 w-7" />
+        </Link>
+        <MobileNavSheet title={t("shellLabel")} triggerLabel={t("openMenu")}>
+          <AdminSidebarNav />
+          <div className="mt-4 flex flex-row items-center justify-between gap-2 border-t border-border/60 pt-4">
+            <LanguageSwitcher />
+            <LogoutButton />
+          </div>
+        </MobileNavSheet>
+      </div>
+
+      <aside className="hidden w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground lg:flex">
         <div className="border-b border-sidebar-border px-5 py-5">
           <Link href="/admin/users" className="flex shrink-0 items-center">
             <LogoFull tagline={false} />

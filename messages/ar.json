@@ -10,6 +10,7 @@
     "backLink": "الذهاب إلى لوحة التحكم"
   },
   "Nav": {
+    "openMenu": "فتح القائمة",
     "dashboard": "لوحة التحكم",
     "binaryTree": "Binary Tree",
     "referrals": "الإحالات",
@@ -802,6 +803,7 @@
     "errorGeneric": "حدث خطأ ما. الرجاء المحاولة مرة أخرى."
   },
   "AdminNav": {
+    "openMenu": "فتح القائمة",
     "shellLabel": "لوحة الإدارة",
     "users": "المستخدمون",
     "subAdmins": "المشرفون الفرعيون",

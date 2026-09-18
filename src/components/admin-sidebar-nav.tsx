@@ -59,7 +59,7 @@ export function AdminSidebarNav({ className }: { className?: string }) {
             href={href}
             aria-current={isActive ? "page" : undefined}
             className={cn(
-              "flex flex-row items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+              "flex min-h-11 flex-row items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
               isActive
                 ? "bg-sidebar-accent text-sidebar-accent-foreground"
                 : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",

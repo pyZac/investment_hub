@@ -28,7 +28,7 @@ export function DashboardNav({ className, isAdmin }: { className?: string; isAdm
             href={href}
             aria-current={isActive ? "page" : undefined}
             className={cn(
-              "flex flex-row items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors",
+              "flex min-h-11 flex-row items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors",
               isActive
                 ? "bg-muted text-foreground"
                 : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
@@ -43,7 +43,7 @@ export function DashboardNav({ className, isAdmin }: { className?: string; isAdm
         <Link
           href="/admin/users"
           className={cn(
-            "flex flex-row items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors",
+            "flex min-h-11 flex-row items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium transition-colors",
             pathname.startsWith("/admin")
               ? "bg-muted text-foreground"
               : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",

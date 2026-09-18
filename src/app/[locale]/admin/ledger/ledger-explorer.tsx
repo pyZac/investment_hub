@@ -69,7 +69,7 @@ function UserFilterPicker({ value, onChange }: { value: UserOption | null; onCha
           <button
             type="button"
             onClick={() => onChange(null)}
-            className="shrink-0 cursor-pointer rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
             aria-label={t("clearUser")}
           >
             <X className="size-3.5" aria-hidden="true" />
@@ -92,7 +92,7 @@ function UserFilterPicker({ value, onChange }: { value: UserOption | null; onCha
         onFocus={() => setOpen(true)}
         placeholder={t("userSearchPlaceholder")}
         autoComplete="off"
-        className="w-56"
+        className="w-full sm:w-56"
       />
       {open && query.trim().length > 0 && (
         <div className="absolute z-10 mt-1 w-64 max-h-56 overflow-y-auto rounded-lg border border-border/60 bg-popover shadow-md shadow-black/20">
@@ -216,7 +216,7 @@ export function LedgerExplorer() {
               resetToFirstPage();
             }}
           >
-            <SelectTrigger className="w-52">
+            <SelectTrigger className="w-full sm:w-52">
               <SelectValue>
                 {(value: string) => (value === ALL ? t("filterTypeAll") : ENTRY_TYPE_LABELS[value as LedgerEntryType])}
               </SelectValue>
@@ -241,7 +241,7 @@ export function LedgerExplorer() {
               resetToFirstPage();
             }}
           >
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-full sm:w-40">
               <SelectValue>{(value: string) => (value === ALL ? t("filterWalletAll") : walletLabel(value))}</SelectValue>
             </SelectTrigger>
             <SelectContent>
@@ -260,7 +260,7 @@ export function LedgerExplorer() {
           <Input
             id="ledger-date-from"
             type="date"
-            className="w-40"
+            className="w-full sm:w-40"
             value={dateFrom}
             onChange={(e) => {
               setDateFrom(e.target.value);
@@ -274,7 +274,7 @@ export function LedgerExplorer() {
           <Input
             id="ledger-date-to"
             type="date"
-            className="w-40"
+            className="w-full sm:w-40"
             value={dateTo}
             onChange={(e) => {
               setDateTo(e.target.value);
@@ -332,7 +332,7 @@ export function LedgerExplorer() {
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border/60">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[640px] text-sm">
             <thead className="bg-muted/40 text-start text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 text-start font-medium">{t("colDate")}</th>

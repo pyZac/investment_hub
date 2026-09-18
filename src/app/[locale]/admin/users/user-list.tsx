@@ -79,7 +79,7 @@ export function UserList({
         <p className="text-sm text-muted-foreground">{t("listEmpty")}</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border/60">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b border-border/60 bg-muted/40">
                 <th className="px-3 py-2 text-start font-medium text-muted-foreground">{t("colName")}</th>

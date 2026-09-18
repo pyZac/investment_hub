@@ -10,6 +10,7 @@
     "backLink": "Go to dashboard"
   },
   "Nav": {
+    "openMenu": "Open menu",
     "dashboard": "Dashboard",
     "binaryTree": "Binary Tree",
     "referrals": "Referrals",
@@ -802,6 +803,7 @@
     "errorGeneric": "Something went wrong. Please try again."
   },
   "AdminNav": {
+    "openMenu": "Open menu",
     "shellLabel": "Admin Panel",
     "users": "Users",
     "subAdmins": "Sub-Admins",

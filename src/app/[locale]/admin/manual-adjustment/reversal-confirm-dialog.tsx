@@ -85,10 +85,10 @@ export function ReversalConfirmDialog({
             <div className="space-y-2 rounded-lg bg-muted/40 px-3 py-2.5 text-sm">
               {transaction.map((row) => (
                 <div key={row.id} className="flex flex-row items-center justify-between gap-2">
-                  <span className="text-muted-foreground" dir="ltr">
+                  <span className="min-w-0 truncate text-muted-foreground" dir="ltr">
                     {row.userEmail ?? "Platform Reserve"} — Wallet {row.wallet}
                   </span>
-                  <span className="font-heading font-semibold tabular-nums" dir="ltr">
+                  <span className="shrink-0 font-heading font-semibold tabular-nums" dir="ltr">
                     {opposite(row.direction) === "CREDIT" ? "+" : "−"}
                     {row.amount}
                   </span>

@@ -59,7 +59,7 @@ export function TransactionFilters({
           value={wallet ?? ALL}
           onValueChange={(value) => applyParam("wallet", value === ALL ? null : String(value))}
         >
-          <SelectTrigger className="w-40">
+          <SelectTrigger className="w-full sm:w-40">
             <SelectValue>
               {(value: string) => (value === ALL ? t("filterWalletAll") : walletLabel(value))}
             </SelectValue>
@@ -81,7 +81,7 @@ export function TransactionFilters({
           value={entryType ?? ALL}
           onValueChange={(value) => applyParam("type", value === ALL ? null : String(value))}
         >
-          <SelectTrigger className="w-52">
+          <SelectTrigger className="w-full sm:w-52">
             <SelectValue>
               {(value: string) =>
                 value === ALL ? t("filterTypeAll") : ENTRY_TYPE_LABELS[value as keyof typeof ENTRY_TYPE_LABELS]
@@ -104,7 +104,7 @@ export function TransactionFilters({
         <Input
           id="tx-date-from"
           type="date"
-          className="w-40"
+          className="w-full sm:w-40"
           defaultValue={dateFrom ?? ""}
           onChange={(e) => applyParam("from", e.target.value)}
         />
@@ -115,7 +115,7 @@ export function TransactionFilters({
         <Input
           id="tx-date-to"
           type="date"
-          className="w-40"
+          className="w-full sm:w-40"
           defaultValue={dateTo ?? ""}
           onChange={(e) => applyParam("to", e.target.value)}
         />

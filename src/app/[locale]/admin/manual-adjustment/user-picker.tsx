@@ -56,7 +56,7 @@ export function UserPicker({
           <button
             type="button"
             onClick={() => onChange(null)}
-            className="shrink-0 cursor-pointer rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
             aria-label={t("clearUser")}
           >
             <X className="size-3.5" aria-hidden="true" />
