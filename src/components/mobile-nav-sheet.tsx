@@ -41,12 +41,15 @@ export function MobileNavSheet({
       </Button>
       <DialogContent
         showCloseButton
-        className="inset-0 h-full max-h-full w-full max-w-full translate-x-0 translate-y-0 rounded-none sm:max-w-full"
+        className="inset-0 grid-rows-[auto_1fr] h-full max-h-full w-full max-w-full translate-x-0 translate-y-0 rounded-none sm:max-w-full"
       >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
-        <div onClick={() => setOpen(false)} className="flex flex-col gap-1">
+        <div
+          onClick={() => setOpen(false)}
+          className="flex min-h-0 flex-col gap-1 overflow-y-auto"
+        >
           {children}
         </div>
       </DialogContent>

@@ -116,8 +116,8 @@ export function LogoMark({ className }: { className?: string }) {
  * no tagline line (used by non-localized scaffolding contexts).
  */
 const LOGO_FULL_MARK_SIZE = {
-  default: "h-9 w-9",
-  lg: "h-14 w-14",
+  default: "h-12 w-12",
+  lg: "h-20 w-20",
 } as const;
 
 const LOGO_FULL_WORDMARK_SIZE = {
