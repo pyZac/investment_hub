@@ -3,6 +3,8 @@ import { TrendingUp } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { daysUntil } from "@/lib/investments";
 import { InvestmentLockCard } from "@/components/investment-lock-card";
+import { Button } from "@/components/ui/button";
+import { Link } from "@/i18n/navigation";
 
 type InvestmentWithPackage = Investment & { package: Package };
 
@@ -25,6 +27,9 @@ export async function InvestmentsPanel({
         <p className="max-w-sm text-sm text-muted-foreground">
           {t("investmentsEmptyState")}
         </p>
+        <Button className="mt-2 cursor-pointer" nativeButton={false} render={<Link href="/packages" />}>
+          {tInvestments("browsePackages")}
+        </Button>
       </div>
     );
   }

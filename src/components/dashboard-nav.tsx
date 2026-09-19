@@ -1,12 +1,13 @@
 "use client";
 
-import { LayoutDashboard, GitBranch, Users, Wallet, Receipt, UserCircle, ShieldCheck } from "lucide-react";
+import { LayoutDashboard, Package, GitBranch, Users, Wallet, Receipt, UserCircle, ShieldCheck } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/navigation";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/dashboard", labelKey: "dashboard", icon: LayoutDashboard },
+  { href: "/packages", labelKey: "invest", icon: Package },
   { href: "/binary-tree", labelKey: "binaryTree", icon: GitBranch },
   { href: "/referrals", labelKey: "referrals", icon: Users },
   { href: "/withdrawals", labelKey: "withdrawals", icon: Wallet },
