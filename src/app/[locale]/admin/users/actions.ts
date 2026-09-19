@@ -2,7 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/lib/route-guard";
-import { adminCreateUser, suspendUser, reinstateUser, CannotSuspendMainAdminError } from "@/lib/users";
+import {
+  adminCreateUser,
+  suspendUser,
+  reinstateUser,
+  toggleMarketerStatus,
+  CannotSuspendMainAdminError,
+} from "@/lib/users";
 import { searchUsers, getUserDetail } from "@/lib/user-management";
 
 export type UserManagementActionErrorKey =
@@ -36,7 +42,14 @@ function mapError(err: unknown): UserManagementActionErrorKey {
  * runs. Both checks independently agree; neither is the UI hiding a button.
  */
 export async function createUserAction(
-  input: { email: string; password: string; name: string; sponsorId?: string; reason: string },
+  input: {
+    email: string;
+    password: string;
+    name: string;
+    sponsorId?: string;
+    reason: string;
+    isMarketer?: boolean;
+  },
   locale: string,
 ): Promise<UserManagementActionResult> {
   try {
@@ -103,6 +116,7 @@ export type UserDetailActionResult =
         activeInvestmentCount: number;
         referralCount: number;
         currentRank: string | null;
+        isMarketer: boolean;
       };
     }
   | { ok: false; errorKey: UserManagementActionErrorKey };
@@ -129,6 +143,7 @@ export async function getUserDetailAction(targetUserId: string): Promise<UserDet
         activeInvestmentCount: detail.activeInvestmentCount,
         referralCount: detail.referralCount,
         currentRank: detail.currentRank,
+        isMarketer: detail.isMarketer,
       },
     };
   } catch (err) {
@@ -159,6 +174,20 @@ export async function reinstateUserAction(
   try {
     const actor = await requirePermission("USER_MANAGEMENT", new Date());
     const user = await reinstateUser(actor.id, targetUserId, { reason });
+    revalidatePath(`/${locale}/admin/users`);
+    return { ok: true, userId: user.id };
+  } catch (err) {
+    return { ok: false, errorKey: mapError(err) };
+  }
+}
+
+export async function toggleMarketerStatusAction(
+  targetUserId: string,
+  locale: string,
+): Promise<UserManagementActionResult> {
+  try {
+    const actor = await requirePermission("USER_MANAGEMENT", new Date());
+    const user = await toggleMarketerStatus(actor.id, targetUserId, new Date());
     revalidatePath(`/${locale}/admin/users`);
     return { ok: true, userId: user.id };
   } catch (err) {

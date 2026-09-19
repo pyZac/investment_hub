@@ -1,27 +1,61 @@
 "use client";
 
-import { LayoutDashboard, Package, GitBranch, Users, Wallet, Receipt, UserCircle, ShieldCheck } from "lucide-react";
+import {
+  LayoutDashboard,
+  Package,
+  GitBranch,
+  Users,
+  Wallet,
+  Receipt,
+  UserCircle,
+  ShieldCheck,
+  Trophy,
+} from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/navigation";
 import { cn } from "@/lib/utils";
 
-const NAV_ITEMS = [
+const BASE_NAV_ITEMS = [
   { href: "/dashboard", labelKey: "dashboard", icon: LayoutDashboard },
   { href: "/packages", labelKey: "invest", icon: Package },
+] as const;
+
+/**
+ * Marketer-only tabs — a regular (non-marketer) user never sees these links
+ * and is redirected to /dashboard if they visit the URLs directly
+ * (requireMarketerOrRedirect on each page). Binary Tree existed before the
+ * marketer split; Referrals and Ranking are gated the same way per the
+ * feature spec, not because they're new — see page-guard.ts.
+ */
+const MARKETER_NAV_ITEMS = [
   { href: "/binary-tree", labelKey: "binaryTree", icon: GitBranch },
   { href: "/referrals", labelKey: "referrals", icon: Users },
+  { href: "/ranking", labelKey: "ranking", icon: Trophy },
+] as const;
+
+const TAIL_NAV_ITEMS = [
   { href: "/withdrawals", labelKey: "withdrawals", icon: Wallet },
   { href: "/transactions", labelKey: "transactions", icon: Receipt },
   { href: "/dashboard/profile", labelKey: "profile", icon: UserCircle },
 ] as const;
 
-export function DashboardNav({ className, isAdmin }: { className?: string; isAdmin?: boolean }) {
+export function DashboardNav({
+  className,
+  isAdmin,
+  isMarketer,
+}: {
+  className?: string;
+  isAdmin?: boolean;
+  isMarketer?: boolean;
+}) {
   const t = useTranslations("Nav");
   const pathname = usePathname();
 
+  const navItems = [...BASE_NAV_ITEMS, ...(isMarketer ? MARKETER_NAV_ITEMS : []), ...TAIL_NAV_ITEMS];
+
   return (
     <nav className={cn("flex flex-row flex-wrap items-center gap-1", className)}>
-      {NAV_ITEMS.map(({ href, labelKey, icon: Icon }) => {
+      {navItems.map(({ href, labelKey, icon: Icon }) => {
         const isActive = pathname === href;
         return (
           <Link

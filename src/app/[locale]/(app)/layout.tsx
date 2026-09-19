@@ -23,6 +23,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const sessionUser = sessionToken ? await validateAndTouchSession(sessionToken, new Date()) : null;
   const hasSession = Boolean(sessionUser);
   const isAdmin = sessionUser?.role === "ADMIN";
+  const isMarketer = sessionUser?.isMarketer ?? false;
   const t = await getTranslations("Nav");
 
   return (
@@ -34,14 +35,14 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
               <Link href="/dashboard" className="flex shrink-0 items-center">
                 <LogoMark />
               </Link>
-              <DashboardNav isAdmin={isAdmin} className="hidden lg:flex" />
+              <DashboardNav isAdmin={isAdmin} isMarketer={isMarketer} className="hidden lg:flex" />
             </div>
             <div className="hidden flex-row items-center gap-2 lg:flex">
               <LanguageSwitcher />
               <LogoutButton />
             </div>
             <MobileNavSheet title={t("dashboard")} triggerLabel={t("openMenu")}>
-              <DashboardNav isAdmin={isAdmin} className="flex-col items-stretch" />
+              <DashboardNav isAdmin={isAdmin} isMarketer={isMarketer} className="flex-col items-stretch" />
               <div className="mt-4 flex flex-row items-center justify-between gap-2 border-t border-border/60 pt-4">
                 <LanguageSwitcher />
                 <LogoutButton />

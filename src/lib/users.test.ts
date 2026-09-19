@@ -7,6 +7,7 @@ import {
   listReferralsForUser,
   suspendUser,
   reinstateUser,
+  toggleMarketerStatus,
   CannotSuspendMainAdminError,
 } from "./users";
 import { adminCreditWalletB } from "./admin-credit";
@@ -197,6 +198,35 @@ describe("adminCreateUser", () => {
         reason: "",
       }),
     ).rejects.toThrow();
+  });
+
+  it("defaults isMarketer to false when not specified", async () => {
+    const mainAdmin = await getMainAdmin();
+
+    const user = await adminCreateUser(mainAdmin.id, {
+      email: `nomarketer-${crypto.randomUUID()}@test.local`,
+      password: "password123",
+      name: "No Marketer Flag",
+      reason: "Default check.",
+    });
+    createdUserIds.push(user.id);
+
+    expect(user.isMarketer).toBe(false);
+  });
+
+  it("creates a marketer account when isMarketer is true", async () => {
+    const mainAdmin = await getMainAdmin();
+
+    const user = await adminCreateUser(mainAdmin.id, {
+      email: `marketer-${crypto.randomUUID()}@test.local`,
+      password: "password123",
+      name: "Marketer User",
+      reason: "Marketer onboarding.",
+      isMarketer: true,
+    });
+    createdUserIds.push(user.id);
+
+    expect(user.isMarketer).toBe(true);
   });
 });
 
@@ -432,5 +462,74 @@ describe("suspendUser / reinstateUser", () => {
     await expect(suspendUser(mainAdmin.id, mainAdmin.id, { reason: "Test." }, forDate)).rejects.toThrow(
       CannotSuspendMainAdminError,
     );
+  });
+});
+
+describe("toggleMarketerStatus", () => {
+  async function makeMarketerTarget(label: string, isMarketer = false) {
+    const user = await registerAsRoot({
+      email: `marketer-toggle-${label}-${crypto.randomUUID()}@test.local`,
+      password: "password123",
+      name: label,
+      securityQuestions: sampleQuestions,
+    });
+    createdUserIds.push(user.id);
+    if (isMarketer) {
+      await prisma.user.update({ where: { id: user.id }, data: { isMarketer: true } });
+    }
+    return user;
+  }
+
+  it("enables marketer status for a regular user and logs an admin_actions row", async () => {
+    const mainAdmin = await getMainAdmin();
+    const target = await makeMarketerTarget("enable");
+
+    const updated = await toggleMarketerStatus(mainAdmin.id, target.id, new Date());
+    expect(updated.isMarketer).toBe(true);
+
+    const action = await prisma.adminAction.findFirstOrThrow({
+      where: { targetUserId: target.id, actionType: "MARKETER_STATUS_CHANGED" },
+    });
+    expect(action.adminId).toBe(mainAdmin.id);
+  });
+
+  it("disables marketer status for a marketer user", async () => {
+    const mainAdmin = await getMainAdmin();
+    const target = await makeMarketerTarget("disable", true);
+
+    const updated = await toggleMarketerStatus(mainAdmin.id, target.id, new Date());
+    expect(updated.isMarketer).toBe(false);
+  });
+
+  it("toggles back and forth correctly across repeated calls", async () => {
+    const mainAdmin = await getMainAdmin();
+    const target = await makeMarketerTarget("flip-flop");
+
+    const first = await toggleMarketerStatus(mainAdmin.id, target.id, new Date());
+    expect(first.isMarketer).toBe(true);
+
+    const second = await toggleMarketerStatus(mainAdmin.id, target.id, new Date());
+    expect(second.isMarketer).toBe(false);
+
+    const third = await toggleMarketerStatus(mainAdmin.id, target.id, new Date());
+    expect(third.isMarketer).toBe(true);
+  });
+
+  it("rejects a sub-admin without USER_MANAGEMENT", async () => {
+    const subAdmin = await makeAdmin();
+    const target = await makeMarketerTarget("ungranted-sub-admin");
+
+    await expect(toggleMarketerStatus(subAdmin.id, target.id, new Date())).rejects.toThrow(/forbidden/i);
+  });
+
+  it("allows a sub-admin with USER_MANAGEMENT", async () => {
+    const subAdmin = await makeAdmin();
+    await prisma.adminPermissionGrant.create({
+      data: { adminUserId: subAdmin.id, permission: "USER_MANAGEMENT" },
+    });
+    const target = await makeMarketerTarget("granted-sub-admin");
+
+    const updated = await toggleMarketerStatus(subAdmin.id, target.id, new Date());
+    expect(updated.isMarketer).toBe(true);
   });
 });

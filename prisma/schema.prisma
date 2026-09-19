@@ -52,6 +52,7 @@ enum AdminActionType {
   SUBADMIN_PERMISSIONS_UPDATED
   SUBADMIN_DEACTIVATED
   SUBADMIN_REACTIVATED
+  MARKETER_STATUS_CHANGED
 }
 
 enum SecurityEventType {
@@ -73,6 +74,7 @@ model User {
 
   role        UserRole @default(USER)
   isMainAdmin Boolean  @default(false) @map("is_main_admin")
+  isMarketer  Boolean  @default(false) @map("is_marketer")
 
   createdByAdminId  String? @map("created_by_admin_id")
   createdByAdmin    User?   @relation("AdminCreatedUsers", fields: [createdByAdminId], references: [id])

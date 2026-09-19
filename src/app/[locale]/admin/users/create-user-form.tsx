@@ -17,6 +17,7 @@ export function CreateUserForm({ locale }: { locale: string }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [reason, setReason] = useState("");
+  const [isMarketer, setIsMarketer] = useState(false);
   const [sponsor, setSponsor] = useState<{ id: string; name: string; email: string } | null>(null);
   const [errorKey, setErrorKey] = useState<UserManagementActionErrorKey | null>(null);
   const [success, setSuccess] = useState(false);
@@ -28,7 +29,7 @@ export function CreateUserForm({ locale }: { locale: string }) {
     setSuccess(false);
     startTransition(async () => {
       const result = await createUserAction(
-        { name, email, password, sponsorId: sponsor?.id, reason },
+        { name, email, password, sponsorId: sponsor?.id, reason, isMarketer },
         locale,
       );
       if (result.ok) {
@@ -37,6 +38,7 @@ export function CreateUserForm({ locale }: { locale: string }) {
         setEmail("");
         setPassword("");
         setReason("");
+        setIsMarketer(false);
         setSponsor(null);
       } else {
         setErrorKey(result.errorKey);
@@ -77,6 +79,16 @@ export function CreateUserForm({ locale }: { locale: string }) {
           />
         </div>
       </div>
+
+      <label className="flex flex-row items-center gap-2.5 rounded-lg border border-border/60 bg-muted/40 px-3 py-2.5 text-sm cursor-pointer hover:bg-muted/60 sm:max-w-xs">
+        <input
+          type="checkbox"
+          checked={isMarketer}
+          onChange={(e) => setIsMarketer(e.target.checked)}
+          className="size-4 shrink-0 accent-brand"
+        />
+        <span className="text-foreground">{t("marketerAccountLabel")}</span>
+      </label>
 
       <SponsorPicker value={sponsor} onChange={setSponsor} />
 

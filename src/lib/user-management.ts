@@ -147,7 +147,15 @@ export async function getUserDetail(actingAdminId: string, targetUserId: string)
 
   const user = await prisma.user.findUniqueOrThrow({
     where: { id: targetUserId },
-    select: { id: true, name: true, email: true, createdAt: true, suspendedAt: true, sponsorId: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      createdAt: true,
+      suspendedAt: true,
+      sponsorId: true,
+      isMarketer: true,
+    },
   });
 
   const [wallets, activeInvestmentCount, referralCount, rankProgress] = await Promise.all([

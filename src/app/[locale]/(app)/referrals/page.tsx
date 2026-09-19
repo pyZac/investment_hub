@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
 import QRCode from "qrcode";
 import { getTranslations, getLocale } from "next-intl/server";
-import { requireSessionOrRedirect } from "@/lib/page-guard";
+import { requireMarketerOrRedirect } from "@/lib/page-guard";
 import { listReferralsForUser } from "@/lib/users";
 import { listDirectCommissionHistoryForUser } from "@/lib/direct-commission";
 import { toDisplay } from "@/lib/display";
@@ -28,7 +28,7 @@ async function buildReferralLink(locale: string, code: string): Promise<string> 
 export default async function ReferralsPage() {
   const t = await getTranslations("Referrals");
   const locale = await getLocale();
-  const user = await requireSessionOrRedirect(new Date());
+  const user = await requireMarketerOrRedirect(new Date());
 
   const [referrals, history] = await Promise.all([
     listReferralsForUser(user.id),

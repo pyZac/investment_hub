@@ -13,6 +13,7 @@ import {
   getRankProgressForUser,
   listRankConfigs,
   listRankConfigHistory,
+  listActiveRankLadder,
   RankAlreadyAchievedError,
   RankOrderTooLowError,
 } from "./rank";
@@ -1216,5 +1217,58 @@ describe("listRankConfigs / listRankConfigHistory (admin panel read paths)", () 
     expect(filteredHistory).toHaveLength(1);
     expect(filteredHistory[0].id).toBe(created.id);
     expect(filteredHistory[0].setByAdminName).toBe(mainAdmin.name);
+  });
+});
+
+describe("listActiveRankLadder (public/user-facing ranking page read path)", () => {
+  afterEach(async () => {
+    await closeAllScratchRanks(new Date("2026-09-16T00:00:00.000Z"));
+  });
+
+  it("requires no permission — any caller-less call succeeds (not gated like listRankConfigs)", async () => {
+    await expect(listActiveRankLadder()).resolves.toBeDefined();
+  });
+
+  it("returns every active rank, ordered by rankOrder ascending", async () => {
+    const ladder = await listActiveRankLadder();
+    expect(ladder.length).toBeGreaterThan(0);
+    for (let i = 0; i < ladder.length - 1; i++) {
+      expect(ladder[i].rankOrder).toBeLessThan(ladder[i + 1].rankOrder);
+    }
+  });
+
+  it("includes a newly created active rank and excludes a closed-out one", async () => {
+    const forDate = new Date("2026-09-15T10:00:00.000Z");
+    const rankName = `ScratchLadder-${crypto.randomUUID()}`;
+    await makeScratchRank(rankName, forDate);
+
+    const ladderWithNew = await listActiveRankLadder();
+    expect(ladderWithNew.some((r) => r.rankName === rankName)).toBe(true);
+
+    await closeAllScratchRanks(new Date("2026-09-16T00:00:00.000Z"));
+
+    const ladderAfterClose = await listActiveRankLadder();
+    expect(ladderAfterClose.some((r) => r.rankName === rankName)).toBe(false);
+  });
+
+  it("does not leak admin-only fields (achievedByAnyUser, setByAdminName)", async () => {
+    const ladder = await listActiveRankLadder();
+    for (const row of ladder) {
+      expect(row).not.toHaveProperty("achievedByAnyUser");
+      expect(row).not.toHaveProperty("setByAdminName");
+    }
+  });
+
+  it("returns the fields a ranking page needs: mrvRequired, directReferralsRequired, rewardAmount, rewardType", async () => {
+    const forDate = new Date("2026-09-15T10:00:00.000Z");
+    const rankName = `ScratchLadderFields-${crypto.randomUUID()}`;
+    const created = await makeScratchRank(rankName, forDate);
+
+    const ladder = await listActiveRankLadder();
+    const row = ladder.find((r) => r.rankName === rankName)!;
+    expect(row.mrvRequired.toString()).toBe(created.mrvRequired.toString());
+    expect(row.directReferralsRequired).toBe(created.directReferralsRequired);
+    expect(row.rewardAmount.toString()).toBe(created.rewardAmount.toString());
+    expect(row.rewardType).toBe(created.rewardType);
   });
 });

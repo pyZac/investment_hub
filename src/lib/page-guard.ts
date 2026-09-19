@@ -70,3 +70,19 @@ export async function requirePermissionOrRedirect(permission: AdminPermission, f
     throw err;
   }
 }
+
+/**
+ * Gates the marketer-only user-facing pages (Binary Tree, Referrals,
+ * Ranking) — a regular (non-marketer) user hitting one of these URLs
+ * directly is redirected to /dashboard rather than seeing the page, same
+ * "hidden nav tab implies blocked page" rule requirePermissionOrRedirect
+ * already applies on the admin side. No session at all still redirects to
+ * /login first, same as every other *OrRedirect helper here.
+ */
+export async function requireMarketerOrRedirect(forDate: Date) {
+  const user = await requireSessionOrRedirect(forDate);
+  if (!user.isMarketer) {
+    redirect("/dashboard");
+  }
+  return user;
+}

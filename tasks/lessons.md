@@ -1593,3 +1593,64 @@ are exactly this failure's fingerprint. Fixed by making `logo.tsx`
 (previously a plain Server Component) a Client Component so `useId()` is
 available, confirmed safe since none of its 4 call sites pass server-only
 data through it.
+
+## 2026-09-19 — post-phase editing session (isMarketer field, ranking page)
+Mistake: none in the new code, but re-hit the exact Phase 3 container
+-Prisma-Client staleness quirk from a much earlier lesson in this file
+(search "argon2" / "@prisma/client" Phase 3 entry) — worth a second entry
+since it wasted significant time before being correctly diagnosed. After
+adding `isMarketer` to the User model and running `npx prisma migrate dev`
+on the HOST (which also regenerates the host's `@prisma/client`), the admin
+"create user" form failed every single attempt with a generic
+`errorEmailInUse` message — even for guaranteed-fresh, never-before-used
+email addresses, both via the browser and confirmed NOT a DB-level
+duplicate (queried directly, zero matching rows). Spent a long debugging
+pass suspecting: double form submission (real, but a red herring — the
+second POST was an unrelated debounced user-list search hitting the same
+page URL, not a duplicate create), stale Next.js server-action IDs, Zod
+schema shape mismatches on the RSC-serialized payload (`sponsorId:
+"$undefined"`), and a misleadingly-broad `mapError()` regex
+(`/email/i.test(err.message)` catches almost anything mentioning "email").
+The real cause, found only by adding a temporary `console.error` in the
+action and reading the container's actual stdout: `Unknown argument
+'createdByAdminId'. Did you mean 'createdByAdmin'?` — the `app` container's
+`@prisma/client` (a separate anonymous Docker volume from the host's, per
+the standing Phase 3 note) still had the PRE-migration schema shape,
+because `docker compose exec app npx prisma generate` was never run after
+the migration — only the host-side `migrate dev` had regenerated the
+host's client. `mapError`'s over-broad `/email/i` regex then took this
+completely unrelated Prisma validation error and mapped it to
+"this email is already in use," which read as a totally different, far
+more specific bug than what was actually happening.
+Rule: (1) **this is now the second time the container/host Prisma-Client
+staleness gap has caused real debugging time in this project — after ANY
+`prisma migrate dev`/schema change, immediately run `docker compose exec
+app npx prisma generate` (then restart the container) before doing ANY
+manual browser verification, as a reflex, not something to rediscover from
+symptoms.** (2) When a server action's UI-facing error message doesn't
+match the actual scenario (e.g., "email already in use" for a definitely
+-fresh email), don't trust the mapped error key — add a temporary
+`console.error(err)` in the action's catch block and read the real error
+from `docker compose logs app`, which is authoritative, before spending
+time on any other theory. (3) A `mapError()`/error-classification function
+that pattern-matches on `err.message` substrings (`/email/i`,
+`/forbidden/i`, etc.) is inherently fragile — an unrelated error that
+happens to mention the same word gets silently misclassified into a
+specific, wrong, user-facing error key instead of falling through to
+"errorGeneric" where it would at least look generic enough to prompt
+suspicion. Not fixed in this session (out of scope — pre-existing pattern
+used throughout this codebase's action files, not something this session's
+tickets asked to change), but worth flagging for a future session: consider
+tightening these regexes or switching to typed error classes (as
+`admin-management.ts` already does) throughout, not just for new code.
+
+Also caught (confirmed with user, fixed): a pre-existing RTL bug in the
+shared `RankProgressPanel` (src/components/rank-progress-panel.tsx, Phase
+9, not written this session) — the "current / threshold" progress-bar
+numbers (e.g. MRV "25000.00 / 0.00") had no `dir="ltr"` on their span, so
+under `dir="rtl"` the browser's bidi algorithm visually reordered which
+number sits on which side of the slash. Existed on the dashboard page all
+along; only became visible/flagged now because this session's Ranking
+page reuses the same component on a second page. One-line fix: added
+`dir="ltr"` to that span, matching this project's established
+tabular-nums-and-numeric-ranges-stay-LTR convention used elsewhere.

@@ -1,5 +1,5 @@
 import { getTranslations, getLocale } from "next-intl/server";
-import { requireSessionOrRedirect } from "@/lib/page-guard";
+import { requireMarketerOrRedirect } from "@/lib/page-guard";
 import { getMySubtree } from "@/lib/binary-tree";
 import { getMyLatestBinaryCycle, daysUntilNextSaturday, type QualificationFailureReason } from "@/lib/binary-cycle";
 import { toDisplay } from "@/lib/display";
@@ -13,7 +13,7 @@ export default async function BinaryTreePage() {
   const t = await getTranslations("BinaryTree");
   const locale = await getLocale();
   const now = new Date();
-  const user = await requireSessionOrRedirect(now);
+  const user = await requireMarketerOrRedirect(now);
 
   const [subtree, latestCycle] = await Promise.all([
     getMySubtree(user.id, MAX_DEPTH),

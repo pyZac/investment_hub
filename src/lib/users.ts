@@ -100,9 +100,10 @@ const adminCreateUserInputSchema = z.object({
   name: z.string().min(1),
   sponsorId: z.string().optional(),
   reason: z.string().min(1, "A reason is required for admin-created accounts."),
+  isMarketer: z.boolean().optional().default(false),
 });
 
-export type AdminCreateUserInput = z.infer<typeof adminCreateUserInputSchema>;
+export type AdminCreateUserInput = z.input<typeof adminCreateUserInputSchema>;
 
 /**
  * Admin-created account. Requires the acting admin to be the main admin or
@@ -151,6 +152,7 @@ export async function adminCreateUser(actingAdminId: string, input: AdminCreateU
         role: "USER",
         sponsorId: data.sponsorId,
         createdByAdminId: actingAdminId,
+        isMarketer: data.isMarketer,
       },
     });
 
@@ -320,6 +322,39 @@ export async function reinstateUser(actingAdminId: string, targetUserId: string,
         actionType: "USER_REINSTATED",
         targetUserId,
         reason: data.reason,
+      },
+    });
+    return updated;
+  });
+}
+
+/**
+ * Flips a user's isMarketer flag (enables/disables the marketer-only nav
+ * tabs — Binary Tree, Referrals, Ranking). Unlike suspendUser/reinstateUser,
+ * this is a reversible UI feature flag, not a financial freeze, so it takes
+ * no "reason" — a one-click admin toggle, matching the feature's own
+ * wording. Still logged to admin_actions (acting admin, target user, and
+ * the resulting isMarketer value in `reason` for audit visibility) so the
+ * change is traceable even without a free-text justification field.
+ */
+export async function toggleMarketerStatus(actingAdminId: string, targetUserId: string, forDate: Date) {
+  await assertHasUserManagementPermission(actingAdminId);
+
+  const target = await prisma.user.findUniqueOrThrow({ where: { id: targetUserId } });
+  const nextIsMarketer = !target.isMarketer;
+
+  return prisma.$transaction(async (tx) => {
+    const updated = await tx.user.update({
+      where: { id: targetUserId },
+      data: { isMarketer: nextIsMarketer },
+    });
+    await tx.adminAction.create({
+      data: {
+        adminId: actingAdminId,
+        actionType: "MARKETER_STATUS_CHANGED",
+        targetUserId,
+        reason: nextIsMarketer ? "Marketer status enabled" : "Marketer status disabled",
+        createdAt: forDate,
       },
     });
     return updated;

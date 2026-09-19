@@ -392,6 +392,44 @@ export async function getRankProgressForUser(userId: string, forDate: Date): Pro
   return { currentRank, nextRank, currentMrv, currentReferralCount };
 }
 
+export type RankLadderRow = {
+  id: string;
+  rankName: string;
+  mrvRequired: Prisma.Decimal;
+  directReferralsRequired: number;
+  rewardAmount: Prisma.Decimal;
+  rewardType: RankRewardType;
+  rankOrder: number;
+};
+
+/**
+ * The public rank ladder — every currently-active rank (effectiveTo: null),
+ * lowest to highest, for the user-facing Ranking page. Deliberately NOT
+ * permission-gated like listRankConfigs (the admin equivalent): any
+ * authenticated user should be able to see what ranks exist and what they
+ * reward, same as the dashboard's own RankProgressPanel already shows a
+ * user their own progress. Also deliberately excludes admin-only fields
+ * (achievedByAnyUser, setByAdminName) that listRankConfigs includes — those
+ * describe internal admin-editing state, not something a regular user needs
+ * to see.
+ */
+export async function listActiveRankLadder(): Promise<RankLadderRow[]> {
+  const activeRanks = await prisma.rankConfig.findMany({
+    where: { effectiveTo: null },
+    orderBy: { rankOrder: "asc" },
+  });
+
+  return activeRanks.map((r) => ({
+    id: r.id,
+    rankName: r.rankName,
+    mrvRequired: r.mrvRequired,
+    directReferralsRequired: r.directReferralsRequired,
+    rewardAmount: r.rewardAmount,
+    rewardType: r.rewardType,
+    rankOrder: r.rankOrder,
+  }));
+}
+
 async function assertHasRankConfigPermission(actingAdminId: string): Promise<void> {
   const admin = await prisma.user.findUnique({ where: { id: actingAdminId } });
   if (!admin || admin.role !== "ADMIN") {

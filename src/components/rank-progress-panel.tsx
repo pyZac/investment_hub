@@ -26,7 +26,7 @@ function ProgressBar({
     <div className="space-y-1.5">
       <div className="flex flex-row items-center justify-between gap-2">
         <span className="text-sm font-medium">{label}</span>
-        <span className="text-sm font-semibold tabular-nums">
+        <span className="text-sm font-semibold tabular-nums" dir="ltr">
           {currentDisplay} / {thresholdDisplay}
         </span>
       </div>

@@ -14,7 +14,12 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { getUserDetailAction, suspendUserAction, reinstateUserAction } from "./actions";
+import {
+  getUserDetailAction,
+  suspendUserAction,
+  reinstateUserAction,
+  toggleMarketerStatusAction,
+} from "./actions";
 
 type Detail = {
   id: string;
@@ -27,6 +32,7 @@ type Detail = {
   activeInvestmentCount: number;
   referralCount: number;
   currentRank: string | null;
+  isMarketer: boolean;
 };
 
 export function UserDetailPanel({
@@ -82,6 +88,19 @@ export function UserDetailPanel({
     });
   }
 
+  function toggleMarketer() {
+    startTransition(async () => {
+      const result = await toggleMarketerStatusAction(userId, locale);
+      if (result.ok) {
+        const refreshed = await getUserDetailAction(userId);
+        if (refreshed.ok) {
+          setDetail(refreshed.detail);
+        }
+        onChanged();
+      }
+    });
+  }
+
   return (
     <>
       <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -97,11 +116,12 @@ export function UserDetailPanel({
           {detail && (
             <div className="space-y-5">
               <div className="space-y-1">
-                <div className="flex flex-row items-center gap-2">
+                <div className="flex flex-row flex-wrap items-center gap-2">
                   <span className="font-heading text-base font-medium">{detail.name}</span>
                   <Badge variant={detail.suspendedAt === null ? "success" : "destructive"}>
                     {detail.suspendedAt === null ? t("statusActive") : t("statusSuspended")}
                   </Badge>
+                  {detail.isMarketer ? <Badge variant="outline">{t("marketerBadge")}</Badge> : null}
                 </div>
                 <p className="text-sm text-muted-foreground">{detail.email}</p>
                 <p className="text-xs text-muted-foreground">
@@ -141,13 +161,23 @@ export function UserDetailPanel({
                 </div>
               </div>
 
-              <Button
-                variant={detail.suspendedAt === null ? "destructive" : "secondary"}
-                className="cursor-pointer"
-                onClick={() => setConfirmAction(detail.suspendedAt === null ? "suspend" : "reinstate")}
-              >
-                {detail.suspendedAt === null ? t("suspend") : t("reinstate")}
-              </Button>
+              <div className="flex flex-row flex-wrap gap-2">
+                <Button
+                  variant={detail.suspendedAt === null ? "destructive" : "secondary"}
+                  className="cursor-pointer"
+                  onClick={() => setConfirmAction(detail.suspendedAt === null ? "suspend" : "reinstate")}
+                >
+                  {detail.suspendedAt === null ? t("suspend") : t("reinstate")}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="cursor-pointer"
+                  disabled={isPending}
+                  onClick={toggleMarketer}
+                >
+                  {detail.isMarketer ? t("disableMarketing") : t("enableMarketing")}
+                </Button>
+              </div>
             </div>
           )}
 

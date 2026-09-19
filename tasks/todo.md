@@ -1,72 +1,102 @@
-# Session: Logo fix verification + password show/hide + admin settings page
+# Session: Ranking page + Marketer role split
 
-## FIX 1 — Logo mark missing in admin sidebar
-- [x] Investigated: source code was already correct (viewBox/size already fixed in a prior
-      commit). Root cause was a stale `next dev` compile in the running container —
-      confirmed via DOM inspection (was serving old `viewBox="0 0 1080 1080"`/`h-9 w-9`,
-      not the committed `313.48 336.47 453.06 407.11`/`h-16 w-16`).
-- [x] Restarted the `app` container; re-inspected DOM — now serving the correct/updated
-      SVG. No code change needed. Nothing to commit for this fix.
+## Investigation notes
+- `RankProgressPanel` (src/components/rank-progress-panel.tsx) + `getRankProgressForUser`
+  (src/lib/rank.ts) already exist and are reused as-is for the current-rank/progress part.
+- No existing ungated "list all active ranks" reader — `listRankConfigs` is
+  RANK_CONFIG-permission-gated (admin only). Need a NEW ungated reader
+  (`listActiveRankLadder()`, session-only) for the public rank ladder table.
+- `adminCreateUser` lives in `src/lib/users.ts` (not user-management.ts).
+- `getUserDetail` lives in `src/lib/user-management.ts`.
+- No `MARKETER_STATUS_CHANGED`-equivalent AdminActionType exists — following the
+  USER_SUSPENDED/USER_REINSTATED convention, add one (new migration).
+- Confirmed with user: Binary Tree / Referrals / Ranking gated at BOTH nav visibility
+  AND page level (redirect non-marketers to /dashboard), not just nav.
+- `validateAndTouchSession` already does `include: { user: true }` — once `isMarketer`
+  is on the schema, it's available on `sessionUser` in `(app)/layout.tsx` with zero
+  query changes.
 
-## FIX 2 — Password show/hide toggle (all password inputs)
-Files with `type="password"` inputs:
-- [ ] `src/components/login-form.tsx` (login password field)
-- [ ] `src/components/change-password-form.tsx` (current/new/confirm — 3 fields)
-- [ ] `src/app/[locale]/admin/users/create-user-form.tsx` (initial password field)
-- [ ] `src/app/[locale]/admin/sub-admins/create-sub-admin-form.tsx` (initial password field)
+## Step 1 — Schema migration
+- [ ] Add `isMarketer Boolean @default(false) @map("is_marketer")` to `User` model.
+- [ ] Add `MARKETER_STATUS_CHANGED` to `AdminActionType` enum.
+- [ ] `npx prisma migrate dev` — READ the generated SQL in full before trusting it
+      (lessons.md: the EMAIL_CHANGED migration silently included an unrelated FK
+      change last time; verify this one is additive-only).
 
-Plan: build one shared `<PasswordInput>` component (wraps existing `Input`, adds an
-eye/eye-off icon button toggling `type="password"`/`"text"`, 44px touch target per the
-mobile-responsiveness pass), then swap each of the above call sites to use it instead of a
-raw `<Input type="password">`. Zero backend change — purely a client-side UI toggle, no
-`.value` exposure change, no new prop threading into server actions.
+## Step 2 — Backend (Feature 2)
+- [ ] `src/lib/users.ts`: `adminCreateUserInputSchema` gets `isMarketer:
+      z.boolean().optional().default(false)`; `adminCreateUser` writes it to
+      `tx.user.create`.
+- [ ] New `toggleMarketerStatus(actingAdminId, targetUserId, forDate)` in users.ts —
+      USER_MANAGEMENT-gated (same assertHasUserManagementPermission pattern), flips
+      the boolean, logs an admin_actions row (MARKETER_STATUS_CHANGED). No "reason"
+      required (matches feature ask — a toggle button, not a reason-gated action like
+      suspend); confirm this is fine since suspend/reinstate both require reasons but
+      this is a lower-stakes, reversible UI flag, not a financial freeze.
+- [ ] `src/lib/user-management.ts`: `getUserDetail` select + return adds `isMarketer`.
+- [ ] `src/lib/rank.ts`: new `listActiveRankLadder()` — session-only (no permission
+      gate), returns id/rankName/mrvRequired/directReferralsRequired/rewardAmount/
+      rewardType/rankOrder for every `effectiveTo: null` row, ordered by rankOrder.
+      Deliberately excludes achievedByAnyUser/setByAdminName (admin-only fields).
 
-## FIX 3 — Admin account settings page
-- [ ] Schema: add `EMAIL_CHANGED` to `SecurityEventType` enum (confirmed with user — matches
-      existing TOTP_ENROLLED/REMOVED audit pattern). One additive migration, no data change.
-- [ ] `src/lib/auth.ts`: add `updateAdminEmail(userId, input)`:
-  - Zod-validated new email, requires current password (same proof-of-identity bar as
-    `changePassword`), rejects if new email already in use (unique constraint + friendly
-    error, not a raw Prisma error leak), writes `SecurityEvent` (`EMAIL_CHANGED`) same
-    pattern as TOTP enroll/remove. Takes `userId` from the caller's own session only
-    (invariant #9 — never trust a client-supplied id).
-- [ ] `src/lib/totp-enrollment.ts` or new function: session-scoped TOTP **re-enrollment** for
-      an already-logged-in admin (existing `beginTotpEnrollment`/`confirmTotpEnrollment` are
-      pending-token/login-flow-scoped, not usable directly from an authenticated session).
-      Plan: add `beginTotpReenrollment(userId, forDate)` (generates new secret, returns
-      otpauth URI, does NOT persist yet — mirrors `beginTotpEnrollment`'s shape minus the
-      pending-token machinery) and `confirmTotpReenrollment(userId, secret, code, forDate)`
-      (verifies code, persists, logs TOTP_ENROLLED — reuses `removeTotp`'s require-current
-      -code pattern is NOT needed here since re-enrollment always starts by generating a
-      brand new secret, same trust level as first-time enrollment via a live session).
-- [ ] New API routes: `POST /api/admin/update-email`, reuse `/api/auth/change-password` as
-      -is for password, new `POST /api/admin/totp/reenroll/begin` +
-      `POST /api/admin/totp/reenroll/confirm`. All gated by `requireSession` +
-      `isMainAdmin` check (main-admin-only page per FIX 3's wording).
-- [ ] New page: `src/app/[locale]/admin/settings/page.tsx`, gated by
-      `requireMainAdminOrRedirect` (matches sub-admin-management's own gating pattern).
-      Sections: change email, change password (reuse `ChangePasswordForm`), re-enroll TOTP
-      (new client component with QR code + confirm code input, mirrors the login-flow
-      enrollment UI in `login-form.tsx`).
-- [ ] Add sidebar link: `src/components/admin-sidebar-nav.tsx` — new nav item, translated
-      label, only shown to... (nav shows all links regardless of permission today per its
-      own comment; page itself gates via `requireMainAdminOrRedirect`, consistent with
-      existing pattern for sub-admins page).
-- [ ] Translations: add EN/AR strings for the new page + nav label.
+## Step 3 — Admin UI (Feature 2)
+- [ ] `create-user-form.tsx`: add "Marketer account" checkbox, wired into
+      createUserAction's input.
+- [ ] `actions.ts` (admin/users): thread `isMarketer` through `createUserAction`'s
+      input type; add `toggleMarketerStatusAction`.
+- [ ] `user-detail-panel.tsx`: add isMarketer to the Detail type; add "Enable/Disable
+      marketing features" button next to suspend/reinstate, calling the new action,
+      optimistic-refetch like the existing suspend/reinstate flow (no confirm dialog —
+      matches "toggle button" wording, not a destructive/reason-gated action).
+- [ ] Translations (AdminUsers namespace, EN+AR): marketerAccountLabel ("Marketer
+      account" / "حساب مسوّق"), enableMarketing ("Enable marketing features" /
+      "تفعيل ميزات التسويق"), disableMarketing ("Disable marketing features" /
+      "تعطيل ميزات التسويق"), plus a marketer status label/badge for the detail view.
 
-## Tests
-- [ ] `src/lib/auth.test.ts`: tests for `updateAdminEmail` — success, wrong current password,
-      duplicate email, non-existent user.
-- [ ] `src/lib/totp-enrollment.test.ts` (or new file): tests for re-enrollment begin/confirm
-      — success path, wrong code, old secret invalidated after new one confirmed.
+## Step 4 — Ranking page (Feature 1)
+- [ ] New `src/app/[locale]/(app)/ranking/page.tsx` — requireMarketerOrRedirect,
+      renders RankProgressPanel (existing, reused as-is) + a new rank-ladder table/grid
+      component consuming listActiveRankLadder().
+- [ ] New `rank-ladder.tsx` component — simple table/grid, each row: rank name, MRV
+      threshold, referral threshold, reward amount + type. Follows frontend-design
+      skill (real elevation, not bare rows) and bilingual-rtl (reward amounts stay
+      tabular-nums, rank names are domain terms so stay English-styled per the
+      glossary rule already established elsewhere, e.g. investment-related labels).
+- [ ] `page-guard.ts`: new `requireMarketerOrRedirect` helper (403-style redirect to
+      /dashboard if `!user.isMarketer`), mirroring requireMainAdminOrRedirect's shape.
+- [ ] Apply requireMarketerOrRedirect to binary-tree/page.tsx and referrals/page.tsx
+      too (currently plain requireSessionOrRedirect) — confirmed in scope per user's
+      answer to the gating question.
+- [ ] Translations: new `Ranking` namespace (pageTitle/pageDescription/ladder column
+      headers) EN+AR.
 
-## Verification
-- [ ] `npx tsc --noEmit` clean.
-- [ ] Full test suite run (background, sequential per project convention).
-- [ ] Manual check: settings page renders, main-admin-only gating works (sub-admin
-      redirected), password toggle works on all 4 password fields, EN+AR.
+## Step 5 — Nav changes
+- [ ] `(app)/layout.tsx`: pass `isMarketer={sessionUser?.isMarketer ?? false}` to
+      DashboardNav alongside isAdmin.
+- [ ] `dashboard-nav.tsx`: split NAV_ITEMS into always-visible
+      (dashboard/invest/withdrawals/transactions/profile) and marketer-only
+      (binaryTree/referrals/ranking — note referrals+ranking are NEW additions to the
+      marketer set per spec, binaryTree already existed). Add Ranking nav item
+      (Trophy icon, matches existing convention from rank-progress-panel/admin
+      sidebar).
 
-## Commit + push
-- [ ] Commit (exclude `docker-compose.yml` — standing instruction, still local-only for
-      DISABLE_ADMIN_TOTP dev convenience).
-- [ ] Push to main.
+## Step 6 — Tests
+- [ ] users.test.ts / user-management.test.ts (wherever fits existing file split):
+      adminCreateUser with isMarketer true/false (default), toggleMarketerStatus
+      (flips both directions, logs admin_actions row, permission-gated, non-main-admin
+      without USER_MANAGEMENT rejected).
+- [ ] rank.test.ts (or wherever rank tests live): listActiveRankLadder returns only
+      active (effectiveTo: null) ranks, ordered by rankOrder, no admin-only fields
+      leaked, no permission gate (any session works).
+
+## Step 7 — Verification
+- [ ] tsc --noEmit clean.
+- [ ] Full test suite (background, sequential).
+- [ ] Manual: log in as a non-marketer regular user — confirm nav shows only 5 tabs,
+      confirm direct URL to /ranking, /binary-tree, /referrals redirects to /dashboard.
+      Toggle a user to marketer via admin panel, confirm nav updates on next login/
+      revalidation, ranking page renders ladder + progress panel correctly. EN + AR
+      screenshots, RTL check on ranking page and the new admin checkbox/toggle button.
+
+## Step 8 — Commit + push
+- [ ] Exclude docker-compose.yml (standing instruction).
