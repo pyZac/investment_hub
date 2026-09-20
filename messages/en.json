@@ -21,6 +21,7 @@
     "referrals": "Referrals",
     "ranking": "Ranking",
     "withdrawals": "Withdrawals",
+    "transfer": "Transfer",
     "transactions": "Transactions",
     "profile": "Profile",
     "logout": "Log out",
@@ -212,6 +213,42 @@
     "errorCapitalLocked": "This investment's capital is still within its 6-month lock.",
     "errorAlreadyReleased": "This investment's capital has already been released.",
     "errorNotOwned": "This investment could not be found.",
+    "errorGeneric": "Something went wrong. Please try again."
+  },
+  "Transfer": {
+    "pageTitle": "Transfer",
+    "pageDescription": "Send Wallet B funds directly to another user. Instant, self-service, available any day.",
+    "sectionHeading": "Send to another user",
+    "sectionDescription": "Search by name or email, enter an amount, and confirm.",
+
+    "formTitle": "New transfer",
+    "yourBalanceLabel": "Your Wallet B balance",
+    "recipientLabel": "Recipient",
+    "recipientSearchPlaceholder": "Search by name or email…",
+    "recipientNoResults": "No matching users found.",
+    "clearRecipient": "Clear recipient",
+    "amountLabel": "Amount",
+    "minimumHint": "Minimum {minimum, number}.",
+    "submit": "Continue",
+    "cancel": "Cancel",
+
+    "confirmTitle": "Confirm transfer",
+    "confirmDescription": "This will send {amount} from your Wallet B to {recipientName}'s Wallet B.",
+    "confirmSubmit": "Confirm transfer",
+    "transferring": "Transferring…",
+    "summaryRecipient": "Recipient",
+    "summaryAmount": "Amount",
+
+    "successTitle": "Transfer complete",
+    "successDescription": "{recipientName} has received the funds in their Wallet B.",
+
+    "errorRecipientRequired": "Choose a recipient first.",
+    "errorAmountInvalid": "Enter a valid amount greater than zero.",
+    "errorBelowMinimum": "The minimum transfer is {minimum, number}.",
+    "errorInsufficientBalance": "This amount exceeds your Wallet B balance.",
+    "errorSuspended": "Your account is suspended; withdrawals and transfers are blocked.",
+    "errorRecipientNotFound": "This recipient is unavailable for transfers.",
+    "errorSelfTransfer": "You cannot transfer to your own account.",
     "errorGeneric": "Something went wrong. Please try again."
   },
   "Transactions": {

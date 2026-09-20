@@ -22,6 +22,8 @@ export const ENTRY_TYPE_LABELS: Record<LedgerEntryType, string> = {
   CAPITAL_RELEASE: "Capital Release",
   SAVING_UNLOCK: "Saving Unlock",
   ADMIN_ADJUSTMENT: "Admin Adjustment",
+  USER_TRANSFER_SENT: "Transfer Sent",
+  USER_TRANSFER_RECEIVED: "Transfer Received",
 };
 
 export type TransactionHistoryFilters = {

@@ -21,6 +21,7 @@
     "referrals": "الإحالات",
     "ranking": "الترتيب",
     "withdrawals": "السحوبات",
+    "transfer": "تحويل",
     "transactions": "المعاملات",
     "profile": "الملف الشخصي",
     "logout": "تسجيل الخروج",
@@ -212,6 +213,42 @@
     "errorCapitalLocked": "رأس مال هذا الاستثمار لا يزال ضمن فترة القفل لمدة 6 أشهر.",
     "errorAlreadyReleased": "تم تحرير رأس مال هذا الاستثمار بالفعل.",
     "errorNotOwned": "تعذر العثور على هذا الاستثمار.",
+    "errorGeneric": "حدث خطأ ما. الرجاء المحاولة مرة أخرى."
+  },
+  "Transfer": {
+    "pageTitle": "تحويل",
+    "pageDescription": "أرسل أموالاً من Wallet B مباشرة إلى مستخدم آخر. فوري وذاتي الخدمة ومتاح في أي يوم.",
+    "sectionHeading": "إرسال إلى مستخدم آخر",
+    "sectionDescription": "ابحث بالاسم أو البريد الإلكتروني، أدخل المبلغ، ثم أكّد.",
+
+    "formTitle": "تحويل جديد",
+    "yourBalanceLabel": "رصيدك في Wallet B",
+    "recipientLabel": "المستلم",
+    "recipientSearchPlaceholder": "ابحث بالاسم أو البريد الإلكتروني…",
+    "recipientNoResults": "لا يوجد مستخدمون مطابقون.",
+    "clearRecipient": "إزالة المستلم",
+    "amountLabel": "المبلغ",
+    "minimumHint": "الحد الأدنى {minimum, number}.",
+    "submit": "متابعة",
+    "cancel": "إلغاء",
+
+    "confirmTitle": "تأكيد التحويل",
+    "confirmDescription": "سيتم إرسال {amount} من Wallet B الخاص بك إلى Wallet B الخاص بـ {recipientName}.",
+    "confirmSubmit": "تأكيد التحويل",
+    "transferring": "جارٍ التحويل…",
+    "summaryRecipient": "المستلم",
+    "summaryAmount": "المبلغ",
+
+    "successTitle": "تم التحويل",
+    "successDescription": "استلم {recipientName} الأموال في Wallet B الخاص به.",
+
+    "errorRecipientRequired": "اختر مستلماً أولاً.",
+    "errorAmountInvalid": "أدخل مبلغاً صحيحاً أكبر من الصفر.",
+    "errorBelowMinimum": "الحد الأدنى للتحويل هو {minimum, number}.",
+    "errorInsufficientBalance": "هذا المبلغ يتجاوز رصيدك في Wallet B.",
+    "errorSuspended": "حسابك موقوف؛ السحوبات والتحويلات محظورة.",
+    "errorRecipientNotFound": "هذا المستلم غير متاح للتحويلات.",
+    "errorSelfTransfer": "لا يمكنك التحويل إلى حسابك الخاص.",
     "errorGeneric": "حدث خطأ ما. الرجاء المحاولة مرة أخرى."
   },
   "Transactions": {

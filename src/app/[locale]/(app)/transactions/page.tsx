@@ -23,6 +23,8 @@ const VALID_ENTRY_TYPES: LedgerEntryType[] = [
   "CAPITAL_RELEASE",
   "SAVING_UNLOCK",
   "ADMIN_ADJUSTMENT",
+  "USER_TRANSFER_SENT",
+  "USER_TRANSFER_RECEIVED",
 ];
 
 function parseWallet(raw: string | undefined): Wallet | undefined {

@@ -6,6 +6,7 @@ import {
   GitBranch,
   Users,
   Wallet,
+  Send,
   Receipt,
   UserCircle,
   ShieldCheck,
@@ -35,6 +36,7 @@ const MARKETER_NAV_ITEMS = [
 
 const TAIL_NAV_ITEMS = [
   { href: "/withdrawals", labelKey: "withdrawals", icon: Wallet },
+  { href: "/transfer", labelKey: "transfer", icon: Send },
   { href: "/transactions", labelKey: "transactions", icon: Receipt },
   { href: "/dashboard/profile", labelKey: "profile", icon: UserCircle },
 ] as const;
