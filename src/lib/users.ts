@@ -10,9 +10,10 @@ const registrationInputSchema = z.object({
   password: z.string().min(8),
   name: z.string().min(1),
   securityQuestions: securityQuestionInputSchema,
+  isMarketer: z.boolean().default(false),
 });
 
-export type RegistrationInput = z.infer<typeof registrationInputSchema>;
+export type RegistrationInput = z.input<typeof registrationInputSchema>;
 
 async function hashSecurityAnswers(questions: SecurityQuestionInput) {
   return Promise.all(
@@ -27,6 +28,12 @@ async function hashSecurityAnswers(questions: SecurityQuestionInput) {
  * Self-registration under a sponsor's referral link. The link param is the
  * sponsor's raw user id (no separate referral-code scheme). Places the new
  * user in the sponsor tree only — placement-tree assignment is Phase 7.
+ *
+ * `isMarketer` is set at registration time from the user's own choice (the
+ * post-phase self-registration feature's checkbox) — unlike an admin
+ * -created account, where an admin later toggles it via
+ * toggleMarketerStatus. Defaults false when omitted, so existing callers
+ * (tests, any future non-marketer registration path) are unaffected.
  */
 export async function registerWithSponsor(sponsorId: string, input: RegistrationInput) {
   const data = registrationInputSchema.parse(input);
@@ -50,6 +57,7 @@ export async function registerWithSponsor(sponsorId: string, input: Registration
         name: data.name,
         role: "USER",
         sponsorId: sponsor.id,
+        isMarketer: data.isMarketer,
       },
     });
 
@@ -62,6 +70,31 @@ export async function registerWithSponsor(sponsorId: string, input: Registration
 
     return user;
   });
+}
+
+export type ReferralCodeValidation = { valid: true; sponsorName: string } | { valid: false };
+
+/**
+ * Server-side check for the public self-registration page's `?ref=` query
+ * param — a valid code is a real, non-suspended user's raw id (see
+ * registerWithSponsor's own doc comment: no separate short-code scheme).
+ * Deliberately returns only a boolean plus the sponsor's display name (a
+ * small "invited by X" UX touch) — never anything else about the sponsor,
+ * since this runs unauthenticated on a public page before any registration
+ * has happened. The registration form must not render at all when this
+ * returns `valid: false` (missing or invalid ref), per this feature's own
+ * requirement — an invalid/missing ref is not a soft warning, it blocks the
+ * whole form.
+ */
+export async function validateReferralCode(code: string | undefined | null): Promise<ReferralCodeValidation> {
+  if (!code) {
+    return { valid: false };
+  }
+  const sponsor = await prisma.user.findUnique({ where: { id: code } });
+  if (!sponsor || sponsor.suspendedAt) {
+    return { valid: false };
+  }
+  return { valid: true, sponsorName: sponsor.name };
 }
 
 /**

@@ -1,4 +1,5 @@
 import { getTranslations } from "next-intl/server";
+import { CheckCircle2 } from "lucide-react";
 import { LogoFull } from "@/components/logo";
 import { LoginForm } from "@/components/login-form";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -19,10 +20,10 @@ function safeRedirectTarget(raw: string | undefined): string {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ redirect?: string }>;
+  searchParams: Promise<{ redirect?: string; registered?: string }>;
 }) {
   const t = await getTranslations("Login");
-  const { redirect } = await searchParams;
+  const { redirect, registered } = await searchParams;
   const redirectTo = safeRedirectTarget(redirect);
 
   return (
@@ -36,7 +37,13 @@ export default async function LoginPage({
           <CardTitle className="font-heading text-2xl font-semibold">{t("pageTitle")}</CardTitle>
           <CardDescription>{t("pageDescription")}</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-5">
+          {registered === "1" && (
+            <div className="flex items-start gap-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 text-sm text-success">
+              <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              <span>{t("registeredSuccessMessage")}</span>
+            </div>
+          )}
           <LoginForm redirectTo={redirectTo} />
         </CardContent>
       </Card>

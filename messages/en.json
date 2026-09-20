@@ -55,7 +55,39 @@
     "enrollDescription": "Scan this QR code with your authenticator app (e.g. Google Authenticator, Authy), then enter the 6-digit code it shows.",
     "enrollManualEntryLabel": "Or enter this code manually",
     "enrollSubmit": "Confirm and log in",
-    "enrollErrorTitle": "Setup failed"
+    "enrollErrorTitle": "Setup failed",
+    "registeredSuccessMessage": "Account created successfully. You can now log in."
+  },
+  "Register": {
+    "pageTitle": "Create your account",
+    "invitedBy": "You were invited by {name}.",
+
+    "invalidRefTitle": "Invalid referral link",
+    "invalidRefDescription": "You need a valid referral link to register.",
+    "backToLogin": "Back to login",
+
+    "nameLabel": "Name",
+    "emailLabel": "Email",
+    "emailPlaceholder": "you@example.com",
+    "passwordLabel": "Password",
+    "confirmPasswordLabel": "Confirm password",
+    "referralCodeLabel": "Referral code",
+    "marketerAccountLabel": "Marketer account",
+
+    "securityQuestionsHeading": "Security questions",
+    "securityQuestionsDescription": "Used to recover your account if you forget your password.",
+    "questionLabel": "Question {number}",
+    "answerLabel": "Answer {number}",
+
+    "submit": "Create account",
+    "submitting": "Creating account…",
+
+    "errorPasswordTooShort": "Password must be at least 8 characters.",
+    "errorPasswordMismatch": "Passwords do not match.",
+    "errorSecurityQuestionsRequired": "All 3 security questions and answers are required.",
+    "errorInvalidRef": "This referral link is no longer valid.",
+    "errorEmailInUse": "An account with this email already exists.",
+    "errorGeneric": "Something went wrong. Please try again."
   },
   "Dashboard": {
     "pageTitle": "Overview",

@@ -55,7 +55,39 @@
     "enrollDescription": "امسح رمز QR هذا باستخدام تطبيق المصادقة الخاص بك (مثل Google Authenticator أو Authy)، ثم أدخل الرمز المكوّن من 6 أرقام الذي يظهر.",
     "enrollManualEntryLabel": "أو أدخل هذا الرمز يدويًا",
     "enrollSubmit": "تأكيد وتسجيل الدخول",
-    "enrollErrorTitle": "فشل الإعداد"
+    "enrollErrorTitle": "فشل الإعداد",
+    "registeredSuccessMessage": "تم إنشاء الحساب بنجاح. يمكنك الآن تسجيل الدخول."
+  },
+  "Register": {
+    "pageTitle": "إنشاء حسابك",
+    "invitedBy": "تمت دعوتك من قِبل {name}.",
+
+    "invalidRefTitle": "رابط إحالة غير صالح",
+    "invalidRefDescription": "تحتاج إلى رابط إحالة صالح للتسجيل.",
+    "backToLogin": "العودة لتسجيل الدخول",
+
+    "nameLabel": "الاسم",
+    "emailLabel": "البريد الإلكتروني",
+    "emailPlaceholder": "you@example.com",
+    "passwordLabel": "كلمة المرور",
+    "confirmPasswordLabel": "تأكيد كلمة المرور",
+    "referralCodeLabel": "رمز الإحالة",
+    "marketerAccountLabel": "حساب مسوّق",
+
+    "securityQuestionsHeading": "أسئلة الأمان",
+    "securityQuestionsDescription": "تُستخدم لاسترداد حسابك إذا نسيت كلمة المرور.",
+    "questionLabel": "السؤال {number}",
+    "answerLabel": "الإجابة {number}",
+
+    "submit": "إنشاء الحساب",
+    "submitting": "جارٍ إنشاء الحساب…",
+
+    "errorPasswordTooShort": "يجب أن تتكون كلمة المرور من 8 أحرف على الأقل.",
+    "errorPasswordMismatch": "كلمتا المرور غير متطابقتين.",
+    "errorSecurityQuestionsRequired": "جميع أسئلة الأمان الثلاثة وإجاباتها مطلوبة.",
+    "errorInvalidRef": "رابط الإحالة هذا لم يعد صالحًا.",
+    "errorEmailInUse": "يوجد حساب بهذا البريد الإلكتروني مسبقًا.",
+    "errorGeneric": "حدث خطأ ما. الرجاء المحاولة مرة أخرى."
   },
   "Dashboard": {
     "pageTitle": "نظرة عامة",

@@ -3,6 +3,7 @@ import { prisma } from "./prisma";
 import {
   registerAsRoot,
   registerWithSponsor,
+  validateReferralCode,
   adminCreateUser,
   listReferralsForUser,
   suspendUser,
@@ -132,6 +133,102 @@ describe("registerWithSponsor", () => {
         securityQuestions: sampleQuestions,
       }),
     ).rejects.toThrow(/suspended/i);
+  });
+
+  it("defaults isMarketer to false when omitted", async () => {
+    const user = await registerWithSponsor(sponsor.id, {
+      email: `default-marketer-${crypto.randomUUID()}@test.local`,
+      password: "password123",
+      name: "Default Marketer User",
+      securityQuestions: sampleQuestions,
+    });
+    createdUserIds.push(user.id);
+
+    expect(user.isMarketer).toBe(false);
+  });
+
+  it("sets isMarketer true when requested at registration", async () => {
+    const user = await registerWithSponsor(sponsor.id, {
+      email: `marketer-${crypto.randomUUID()}@test.local`,
+      password: "password123",
+      name: "Marketer User",
+      securityQuestions: sampleQuestions,
+      isMarketer: true,
+    });
+    createdUserIds.push(user.id);
+
+    expect(user.isMarketer).toBe(true);
+  });
+
+  it("rejects a duplicate email", async () => {
+    const email = `dup-${crypto.randomUUID()}@test.local`;
+    const first = await registerWithSponsor(sponsor.id, {
+      email,
+      password: "password123",
+      name: "First Registrant",
+      securityQuestions: sampleQuestions,
+    });
+    createdUserIds.push(first.id);
+
+    await expect(
+      registerWithSponsor(sponsor.id, {
+        email,
+        password: "password123",
+        name: "Second Registrant",
+        securityQuestions: sampleQuestions,
+      }),
+    ).rejects.toThrow();
+  });
+});
+
+describe("validateReferralCode", () => {
+  let sponsor: Awaited<ReturnType<typeof registerAsRoot>>;
+
+  beforeAll(async () => {
+    sponsor = await registerAsRoot({
+      email: `refcode-sponsor-${crypto.randomUUID()}@test.local`,
+      password: "password123",
+      name: "Ref Code Sponsor",
+      securityQuestions: sampleQuestions,
+    });
+    createdUserIds.push(sponsor.id);
+  });
+
+  it("rejects a missing code", async () => {
+    const result = await validateReferralCode(undefined);
+    expect(result.valid).toBe(false);
+  });
+
+  it("rejects an empty-string code", async () => {
+    const result = await validateReferralCode("");
+    expect(result.valid).toBe(false);
+  });
+
+  it("rejects an unknown code", async () => {
+    const result = await validateReferralCode("nonexistent-id");
+    expect(result.valid).toBe(false);
+  });
+
+  it("rejects a suspended sponsor's code", async () => {
+    const suspended = await registerAsRoot({
+      email: `refcode-suspended-${crypto.randomUUID()}@test.local`,
+      password: "password123",
+      name: "Ref Code Suspended",
+      securityQuestions: sampleQuestions,
+    });
+    createdUserIds.push(suspended.id);
+    await prisma.user.update({ where: { id: suspended.id }, data: { suspendedAt: new Date() } });
+
+    const result = await validateReferralCode(suspended.id);
+    expect(result.valid).toBe(false);
+  });
+
+  it("accepts a real, active sponsor's code and returns their name", async () => {
+    const result = await validateReferralCode(sponsor.id);
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.sponsorName).toBe(sponsor.name);
+    }
   });
 });
 
