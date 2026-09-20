@@ -461,6 +461,59 @@
     "errorCannotModifyMainAdmin": "The main admin account cannot be modified here.",
     "errorGeneric": "Something went wrong. Please try again."
   },
+  "AdminOverview": {
+    "pageTitle": "Overview",
+    "pageDescription": "A glance view of investments, platform financial health, user activity, and background job status.",
+
+    "investmentsHeading": "Investments overview",
+    "activeInvestmentsLabel": "Active investments",
+    "lockedCapitalLabel": "Total capital locked",
+    "upcomingReleasesLabel": "Upcoming releases",
+    "upcomingReleasesWindow": "Next 30 days",
+
+    "byPackageHeading": "By package tier",
+    "byPackageDescription": "Active investments grouped by package.",
+    "byPackageEmpty": "No active investments yet.",
+    "colPackage": "Package",
+    "colCount": "Investments",
+    "colTotalValue": "Total value",
+
+    "upcomingReleasesHeading": "Upcoming capital releases",
+    "upcomingReleasesDescription": "Active investments whose 6-month lock ends within the next 30 days.",
+    "upcomingReleasesEmpty": "No capital releases due in the next 30 days.",
+    "colUser": "User",
+    "colAmount": "Amount",
+    "colReleaseDate": "Release date",
+
+    "financialHealthHeading": "Platform financial health",
+    "totalCreditIssuedLabel": "Total credit issued",
+    "totalLiabilitiesLabel": "Total liabilities",
+    "solvencyRatioLabel": "Solvency ratio",
+    "ratioUndefined": "Undefined — no liabilities recorded yet.",
+    "ratioOverIssued": "Over-issued",
+    "ratioUnderIssued": "Under-issued",
+    "ratioExact": "Exactly matched",
+
+    "userActivityHeading": "User activity",
+    "totalUsersLabel": "Total users",
+    "totalMarketersLabel": "Marketer users",
+    "totalSuspendedLabel": "Suspended users",
+    "newThisMonthLabel": "New this month",
+
+    "jobHealthHeading": "Job health",
+    "jobHealthCardTitle": "Background jobs",
+    "jobHealthCardDescription": "Last run status of every scheduled job.",
+    "jobDailyInterest": "Daily Interest",
+    "jobBinaryCycle": "Binary Cycle",
+    "jobRankEvaluation": "Rank Evaluation",
+    "jobRankPayout": "Rank Payout",
+    "jobReconciliation": "Reconciliation",
+    "neverSucceeded": "Never run",
+    "status_RUNNING": "Running",
+    "status_COMPLETED": "OK",
+    "status_FAILED": "Failed",
+    "status_NEVER_RUN": "Never run"
+  },
   "AdminUsers": {
     "pageTitle": "Users",
     "pageDescription": "Create user accounts, search existing users, and manage suspensions. Admin creation is the only way new users enter the system.",
@@ -916,6 +969,7 @@
   "AdminNav": {
     "openMenu": "Open menu",
     "shellLabel": "Admin Panel",
+    "overview": "Overview",
     "users": "Users",
     "subAdmins": "Sub-Admins",
     "withdrawals": "Withdrawals",

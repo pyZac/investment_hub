@@ -461,6 +461,59 @@
     "errorCannotModifyMainAdmin": "لا يمكن تعديل حساب Main Admin من هنا.",
     "errorGeneric": "حدث خطأ ما. الرجاء المحاولة مرة أخرى."
   },
+  "AdminOverview": {
+    "pageTitle": "نظرة عامة",
+    "pageDescription": "نظرة سريعة على الاستثمارات، والصحة المالية للمنصة، ونشاط المستخدمين، وحالة المهام الخلفية.",
+
+    "investmentsHeading": "نظرة عامة على الاستثمارات",
+    "activeInvestmentsLabel": "الاستثمارات النشطة",
+    "lockedCapitalLabel": "إجمالي رأس المال المقفل",
+    "upcomingReleasesLabel": "الإفراجات القادمة",
+    "upcomingReleasesWindow": "خلال 30 يومًا القادمة",
+
+    "byPackageHeading": "حسب فئة الباقة",
+    "byPackageDescription": "الاستثمارات النشطة مجمّعة حسب الباقة.",
+    "byPackageEmpty": "لا توجد استثمارات نشطة بعد.",
+    "colPackage": "الباقة",
+    "colCount": "عدد الاستثمارات",
+    "colTotalValue": "القيمة الإجمالية",
+
+    "upcomingReleasesHeading": "إفراجات رأس المال القادمة",
+    "upcomingReleasesDescription": "الاستثمارات النشطة التي ينتهي قفلها لمدة 6 أشهر خلال 30 يومًا القادمة.",
+    "upcomingReleasesEmpty": "لا توجد إفراجات لرأس المال مستحقة خلال 30 يومًا القادمة.",
+    "colUser": "المستخدم",
+    "colAmount": "المبلغ",
+    "colReleaseDate": "تاريخ الإفراج",
+
+    "financialHealthHeading": "الصحة المالية للمنصة",
+    "totalCreditIssuedLabel": "إجمالي الرصيد الصادر",
+    "totalLiabilitiesLabel": "إجمالي الالتزامات",
+    "solvencyRatioLabel": "نسبة الملاءة المالية",
+    "ratioUndefined": "غير محدد — لا توجد التزامات مسجلة بعد.",
+    "ratioOverIssued": "إصدار زائد",
+    "ratioUnderIssued": "إصدار ناقص",
+    "ratioExact": "مطابق تمامًا",
+
+    "userActivityHeading": "نشاط المستخدمين",
+    "totalUsersLabel": "إجمالي المستخدمين",
+    "totalMarketersLabel": "المستخدمون المسوّقون",
+    "totalSuspendedLabel": "المستخدمون الموقوفون",
+    "newThisMonthLabel": "جدد هذا الشهر",
+
+    "jobHealthHeading": "حالة المهام",
+    "jobHealthCardTitle": "المهام الخلفية",
+    "jobHealthCardDescription": "حالة آخر تشغيل لكل مهمة مجدولة.",
+    "jobDailyInterest": "Daily Interest",
+    "jobBinaryCycle": "Binary Cycle",
+    "jobRankEvaluation": "Rank Evaluation",
+    "jobRankPayout": "Rank Payout",
+    "jobReconciliation": "Reconciliation",
+    "neverSucceeded": "لم تُشغَّل بعد",
+    "status_RUNNING": "قيد التشغيل",
+    "status_COMPLETED": "سليمة",
+    "status_FAILED": "فشلت",
+    "status_NEVER_RUN": "لم تُشغَّل بعد"
+  },
   "AdminUsers": {
     "pageTitle": "المستخدمون",
     "pageDescription": "إنشاء حسابات مستخدمين، والبحث عن المستخدمين الحاليين، وإدارة التعليق. إنشاء الحساب عبر الإدارة هو الطريقة الوحيدة لدخول مستخدمين جدد إلى النظام.",
@@ -916,6 +969,7 @@
   "AdminNav": {
     "openMenu": "فتح القائمة",
     "shellLabel": "لوحة الإدارة",
+    "overview": "نظرة عامة",
     "users": "المستخدمون",
     "subAdmins": "المشرفون الفرعيون",
     "withdrawals": "السحوبات",

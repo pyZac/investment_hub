@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  LayoutDashboard,
   Users,
   ShieldCheck,
   Wallet,
@@ -21,6 +22,7 @@ import { Link, usePathname } from "@/i18n/navigation";
 import { cn } from "@/lib/utils";
 
 const ADMIN_NAV_ITEMS = [
+  { href: "/admin/overview", labelKey: "overview", icon: LayoutDashboard },
   { href: "/admin/users", labelKey: "users", icon: Users },
   { href: "/admin/sub-admins", labelKey: "subAdmins", icon: ShieldCheck },
   { href: "/admin/withdrawals", labelKey: "withdrawals", icon: Wallet },
