@@ -10,12 +10,17 @@ import {
   CannotSuspendMainAdminError,
 } from "@/lib/users";
 import { searchUsers, getUserDetail } from "@/lib/user-management";
+import { adminResetPassword, CannotResetMainAdminPasswordError } from "@/lib/security-questions";
 
 export type UserManagementActionErrorKey =
   | "errorSponsorNotFound"
   | "errorSponsorSuspended"
   | "errorEmailInUse"
   | "errorCannotSuspendMainAdmin"
+  | "errorCannotResetMainAdminPassword"
+  | "errorReasonRequired"
+  | "errorPasswordMismatch"
+  | "errorPasswordTooShort"
   | "errorForbidden"
   | "errorGeneric";
 
@@ -25,10 +30,12 @@ export type UserManagementActionResult =
 
 function mapError(err: unknown): UserManagementActionErrorKey {
   if (err instanceof CannotSuspendMainAdminError) return "errorCannotSuspendMainAdmin";
+  if (err instanceof CannotResetMainAdminPasswordError) return "errorCannotResetMainAdminPassword";
   if (err instanceof Error) {
     if (/invalid sponsor: user not found/i.test(err.message)) return "errorSponsorNotFound";
     if (/invalid sponsor: account is suspended/i.test(err.message)) return "errorSponsorSuspended";
     if (/forbidden/i.test(err.message)) return "errorForbidden";
+    if (/a reason is required/i.test(err.message)) return "errorReasonRequired";
     if (/unique constraint/i.test(err.message) || /email/i.test(err.message)) return "errorEmailInUse";
   }
   return "errorGeneric";
@@ -117,6 +124,7 @@ export type UserDetailActionResult =
         referralCount: number;
         currentRank: string | null;
         isMarketer: boolean;
+        isMainAdmin: boolean;
       };
     }
   | { ok: false; errorKey: UserManagementActionErrorKey };
@@ -144,6 +152,7 @@ export async function getUserDetailAction(targetUserId: string): Promise<UserDet
         referralCount: detail.referralCount,
         currentRank: detail.currentRank,
         isMarketer: detail.isMarketer,
+        isMainAdmin: detail.isMainAdmin,
       },
     };
   } catch (err) {
@@ -190,6 +199,36 @@ export async function toggleMarketerStatusAction(
     const user = await toggleMarketerStatus(actor.id, targetUserId, new Date());
     revalidatePath(`/${locale}/admin/users`);
     return { ok: true, userId: user.id };
+  } catch (err) {
+    return { ok: false, errorKey: mapError(err) };
+  }
+}
+
+/**
+ * newPassword/confirmPassword match is re-verified here (not just trusted
+ * from the client) before ever calling into adminResetPassword — matching
+ * this codebase's standing pattern of never trusting client-only validation
+ * for anything that mutates a credential or moves money.
+ */
+export async function adminResetPasswordAction(
+  targetUserId: string,
+  newPassword: string,
+  confirmPassword: string,
+  reason: string,
+  locale: string,
+): Promise<UserManagementActionResult> {
+  if (newPassword !== confirmPassword) {
+    return { ok: false, errorKey: "errorPasswordMismatch" };
+  }
+  if (newPassword.length < 8) {
+    return { ok: false, errorKey: "errorPasswordTooShort" };
+  }
+
+  try {
+    const actor = await requirePermission("USER_MANAGEMENT", new Date());
+    await adminResetPassword(actor.id, targetUserId, { newPassword, reason });
+    revalidatePath(`/${locale}/admin/users`);
+    return { ok: true, userId: targetUserId };
   } catch (err) {
     return { ok: false, errorKey: mapError(err) };
   }

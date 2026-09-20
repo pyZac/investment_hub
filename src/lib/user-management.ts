@@ -155,6 +155,7 @@ export async function getUserDetail(actingAdminId: string, targetUserId: string)
       suspendedAt: true,
       sponsorId: true,
       isMarketer: true,
+      isMainAdmin: true,
     },
   });
 

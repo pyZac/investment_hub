@@ -5,6 +5,7 @@ import { useTranslations, useFormatter } from "next-intl";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
@@ -19,6 +20,8 @@ import {
   suspendUserAction,
   reinstateUserAction,
   toggleMarketerStatusAction,
+  adminResetPasswordAction,
+  type UserManagementActionErrorKey,
 } from "./actions";
 
 type Detail = {
@@ -33,6 +36,7 @@ type Detail = {
   referralCount: number;
   currentRank: string | null;
   isMarketer: boolean;
+  isMainAdmin: boolean;
 };
 
 export function UserDetailPanel({
@@ -47,12 +51,21 @@ export function UserDetailPanel({
   onChanged: () => void;
 }) {
   const t = useTranslations("AdminUsers");
+  const tCommon = useTranslations("Common");
   const format = useFormatter();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [confirmAction, setConfirmAction] = useState<"suspend" | "reinstate" | null>(null);
   const [confirmReason, setConfirmReason] = useState("");
   const [error, setError] = useState(false);
   const [isPending, startTransition] = useTransition();
+
+  const [resetStep, setResetStep] = useState<"form" | "confirm" | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [resetReason, setResetReason] = useState("");
+  const [resetFieldError, setResetFieldError] = useState<string | null>(null);
+  const [resetErrorKey, setResetErrorKey] = useState<UserManagementActionErrorKey | null>(null);
+  const [resetSuccess, setResetSuccess] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,6 +110,59 @@ export function UserDetailPanel({
           setDetail(refreshed.detail);
         }
         onChanged();
+      }
+    });
+  }
+
+  function openResetPassword() {
+    setNewPassword("");
+    setConfirmPassword("");
+    setResetReason("");
+    setResetFieldError(null);
+    setResetErrorKey(null);
+    setResetSuccess(false);
+    setResetStep("form");
+  }
+
+  function validateResetForm(): boolean {
+    if (newPassword.length < 8) {
+      setResetFieldError(t("errorPasswordTooShort"));
+      return false;
+    }
+    if (newPassword !== confirmPassword) {
+      setResetFieldError(t("errorPasswordMismatch"));
+      return false;
+    }
+    if (!resetReason.trim()) {
+      setResetFieldError(t("errorReasonRequired"));
+      return false;
+    }
+    setResetFieldError(null);
+    return true;
+  }
+
+  function proceedToResetConfirm() {
+    if (!validateResetForm()) return;
+    setResetErrorKey(null);
+    setResetStep("confirm");
+  }
+
+  function closeResetDialog(open: boolean) {
+    if (!open && !isPending) {
+      setResetStep(null);
+      setResetErrorKey(null);
+      setResetSuccess(false);
+    }
+  }
+
+  function submitResetPassword() {
+    setResetErrorKey(null);
+    startTransition(async () => {
+      const result = await adminResetPasswordAction(userId, newPassword, confirmPassword, resetReason, locale);
+      if (result.ok) {
+        setResetSuccess(true);
+      } else {
+        setResetErrorKey(result.errorKey);
       }
     });
   }
@@ -177,6 +243,11 @@ export function UserDetailPanel({
                 >
                   {detail.isMarketer ? t("disableMarketing") : t("enableMarketing")}
                 </Button>
+                {!detail.isMainAdmin && (
+                  <Button variant="outline" className="cursor-pointer" onClick={openResetPassword}>
+                    {t("resetPassword")}
+                  </Button>
+                )}
               </div>
             </div>
           )}
@@ -221,6 +292,118 @@ export function UserDetailPanel({
               {t("confirm")}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={resetStep !== null} onOpenChange={closeResetDialog}>
+        <DialogContent>
+          <DialogHeader>
+            {resetSuccess ? (
+              <DialogTitle>{t("resetPasswordSuccessTitle")}</DialogTitle>
+            ) : resetStep === "confirm" ? (
+              <DialogTitle>{t("resetPasswordConfirmTitle")}</DialogTitle>
+            ) : (
+              <DialogTitle>{t("resetPasswordTitle")}</DialogTitle>
+            )}
+            {!resetSuccess && resetStep === "confirm" && detail && (
+              <DialogDescription>
+                {t("resetPasswordConfirmDescription", { name: detail.name })}
+              </DialogDescription>
+            )}
+            {resetSuccess && detail && (
+              <DialogDescription>{t("resetPasswordSuccessDescription", { name: detail.name })}</DialogDescription>
+            )}
+          </DialogHeader>
+
+          {!resetSuccess && resetStep === "form" && (
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="reset-new-password">{t("newPasswordLabel")}</Label>
+                <PasswordInput
+                  id="reset-new-password"
+                  autoComplete="new-password"
+                  value={newPassword}
+                  onChange={(e) => {
+                    setNewPassword(e.target.value);
+                    setResetFieldError(null);
+                  }}
+                  toggleLabel={{ show: tCommon("showPassword"), hide: tCommon("hidePassword") }}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="reset-confirm-password">{t("confirmPasswordLabel")}</Label>
+                <PasswordInput
+                  id="reset-confirm-password"
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  onChange={(e) => {
+                    setConfirmPassword(e.target.value);
+                    setResetFieldError(null);
+                  }}
+                  toggleLabel={{ show: tCommon("showPassword"), hide: tCommon("hidePassword") }}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="reset-reason">{t("reasonLabel")}</Label>
+                <Input
+                  id="reset-reason"
+                  value={resetReason}
+                  onChange={(e) => {
+                    setResetReason(e.target.value);
+                    setResetFieldError(null);
+                  }}
+                  placeholder={t("resetPasswordReasonPlaceholder")}
+                />
+              </div>
+              {resetFieldError && (
+                <p role="alert" className="text-sm font-medium text-destructive">
+                  {resetFieldError}
+                </p>
+              )}
+            </div>
+          )}
+
+          {!resetSuccess && resetStep === "confirm" && (
+            <div className="space-y-2 rounded-lg bg-muted/40 px-4 py-3 text-sm">
+              <div className="flex flex-row items-center justify-between gap-2">
+                <span className="text-muted-foreground">{t("reasonLabel")}</span>
+                <span className="font-medium">{resetReason}</span>
+              </div>
+            </div>
+          )}
+
+          {resetErrorKey && (
+            <p role="alert" className="text-sm font-medium text-destructive">
+              {t(resetErrorKey)}
+            </p>
+          )}
+
+          {!resetSuccess && (
+            <DialogFooter>
+              <Button
+                variant="outline"
+                className="cursor-pointer"
+                disabled={isPending}
+                onClick={() => closeResetDialog(false)}
+              >
+                {t("cancel")}
+              </Button>
+              {resetStep === "form" ? (
+                <Button className="cursor-pointer" onClick={proceedToResetConfirm}>
+                  {t("continue")}
+                </Button>
+              ) : (
+                <Button
+                  variant="destructive"
+                  className="cursor-pointer"
+                  disabled={isPending}
+                  onClick={submitResetPassword}
+                >
+                  {isPending ? t("resettingPassword") : t("resetPasswordConfirmSubmit")}
+                </Button>
+              )}
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
     </>

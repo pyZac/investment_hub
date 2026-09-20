@@ -121,10 +121,24 @@ const adminResetInputSchema = z.object({
 
 export type AdminResetPasswordInput = z.infer<typeof adminResetInputSchema>;
 
+export class CannotResetMainAdminPasswordError extends Error {
+  constructor() {
+    super("The main admin's password cannot be reset this way — use the admin settings page instead.");
+    this.name = "CannotResetMainAdminPasswordError";
+  }
+}
+
 /**
  * Admin manual password reset. Requires the acting admin to be the main
  * admin or hold USER_MANAGEMENT. Logged to admin_actions with the mandatory
  * reason. There is no token-based reset flow in this system.
+ *
+ * The main admin's own password can never be targeted here — that account
+ * changes its own password via /admin/settings (self-service, no
+ * admin_actions detour needed since it's always the same account acting on
+ * itself). Blocking it here mirrors suspendUser's CannotSuspendMainAdminError
+ * pattern in users.ts: the main admin is a protected target for every
+ * admin-on-user action in this system, not just suspension.
  */
 export async function adminResetPassword(
   actingAdminId: string,
@@ -155,6 +169,9 @@ export async function adminResetPassword(
   const target = await prisma.user.findUnique({ where: { id: targetUserId } });
   if (!target) {
     throw new Error("Target user not found.");
+  }
+  if (target.isMainAdmin) {
+    throw new CannotResetMainAdminPasswordError();
   }
 
   const passwordHash = await hashPassword(data.newPassword);

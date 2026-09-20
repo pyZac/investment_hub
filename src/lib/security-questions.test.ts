@@ -5,6 +5,7 @@ import {
   setSecurityQuestions,
   resetPasswordViaSecurityQuestions,
   adminResetPassword,
+  CannotResetMainAdminPasswordError,
 } from "./security-questions";
 
 const createdUserIds: string[] = [];
@@ -280,5 +281,20 @@ describe("adminResetPassword", () => {
         reason: "",
       }),
     ).rejects.toThrow();
+  });
+
+  it("rejects targeting the main admin's own password", async () => {
+    const mainAdmin = await getMainAdmin();
+    const originalHash = mainAdmin.passwordHash;
+
+    await expect(
+      adminResetPassword(mainAdmin.id, mainAdmin.id, {
+        newPassword: "shouldnotapply123",
+        reason: "Attempting to reset main admin.",
+      }),
+    ).rejects.toThrow(CannotResetMainAdminPasswordError);
+
+    const unchanged = await prisma.user.findUniqueOrThrow({ where: { id: mainAdmin.id } });
+    expect(unchanged.passwordHash).toBe(originalHash);
   });
 });
