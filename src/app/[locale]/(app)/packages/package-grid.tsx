@@ -93,7 +93,9 @@ export function PackageGrid({
               <CardTitle className="text-base font-medium">{pkg.name}</CardTitle>
             </CardHeader>
             <CardContent className="flex-1">
-              <p className="text-2xl font-bold tabular-nums">{pkg.amount}</p>
+              <p className="text-2xl font-bold tabular-nums" dir="ltr">
+                {pkg.amount}
+              </p>
             </CardContent>
             <CardFooter>
               <Button className="w-full cursor-pointer" onClick={() => openConfirm(pkg)}>
@@ -131,11 +133,15 @@ export function PackageGrid({
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">{t("confirmAmountLabel")}</span>
-                <span className="font-medium tabular-nums">{selected.amount}</span>
+                <span className="font-medium tabular-nums" dir="ltr">
+                  {selected.amount}
+                </span>
               </div>
               <div className="flex justify-between border-t border-border/60 pt-2">
                 <span className="text-muted-foreground">{t("confirmYourBalance")}</span>
-                <span className="font-medium tabular-nums">{walletBBalance}</span>
+                <span className="font-medium tabular-nums" dir="ltr">
+                  {walletBBalance}
+                </span>
               </div>
             </div>
           )}

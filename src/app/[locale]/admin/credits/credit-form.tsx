@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { creditWalletBAction, type CreditActionErrorKey } from "./actions";
 import { UserPicker } from "./user-picker";
+import { toDisplayWithCurrency } from "@/lib/display";
 
 type UserOption = { id: string; name: string; email: string };
 
@@ -155,7 +156,7 @@ export function CreditForm({ locale }: { locale: string }) {
                   Wallet B
                 </span>
                 <span className="font-heading font-semibold tabular-nums" dir="ltr">
-                  {amount}
+                  {toDisplayWithCurrency(amount)}
                 </span>
               </div>
               <div className="flex flex-row items-start justify-between gap-2">

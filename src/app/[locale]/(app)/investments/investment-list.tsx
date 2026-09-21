@@ -5,7 +5,7 @@ import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/componen
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Link } from "@/i18n/navigation";
-import { toDisplay, formatDate } from "@/lib/display";
+import { toDisplayWithCurrency, formatDate } from "@/lib/display";
 import { daysUntil } from "@/lib/investments";
 
 type InvestmentWithPackage = Investment & { package: Package };
@@ -55,7 +55,9 @@ export async function InvestmentList({
             </CardHeader>
 
             <CardContent className="flex-1 space-y-3">
-              <p className="text-2xl font-bold tabular-nums">{toDisplay(investment.amount)}</p>
+              <p className="text-2xl font-bold tabular-nums" dir="ltr">
+                {toDisplayWithCurrency(investment.amount)}
+              </p>
               <p className="text-xs text-muted-foreground">
                 {t("purchasedOn")}: {formatDate(investment.purchasedAt, locale)}
               </p>

@@ -1,7 +1,7 @@
 import { getTranslations, getLocale } from "next-intl/server";
 import { requireSessionOrRedirect } from "@/lib/page-guard";
 import { getWalletBalance } from "@/lib/wallets";
-import { toDisplay } from "@/lib/display";
+import { toDisplay, toDisplayWithCurrency } from "@/lib/display";
 import { config } from "@/lib/config";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { TransferForm } from "./transfer-form";
@@ -24,7 +24,7 @@ export default async function TransferPage() {
           <div className="inline-flex items-baseline gap-2 rounded-lg bg-muted/60 px-4 py-2.5">
             <span className="text-sm text-muted-foreground">Wallet B</span>
             <span dir="ltr" className="font-heading text-lg font-semibold tabular-nums">
-              {toDisplay(walletB)}
+              {toDisplayWithCurrency(walletB)}
             </span>
           </div>
         </div>

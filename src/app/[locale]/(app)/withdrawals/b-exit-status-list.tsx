@@ -43,7 +43,9 @@ export function BExitStatusList({ requests, locale }: { requests: StatusListRequ
         <Card key={request.id} className="border-border/60 shadow-sm">
           <CardContent className="space-y-2 py-4">
             <div className="flex flex-row items-center justify-between gap-2">
-              <span className="font-heading text-lg font-semibold tabular-nums">{request.amount}</span>
+              <span className="font-heading text-lg font-semibold tabular-nums" dir="ltr">
+                {request.amount}
+              </span>
               <Badge variant={statusBadgeVariant(request.status)}>
                 {request.status === "PENDING" && t("statusPending")}
                 {request.status === "APPROVED" && t("statusApproved")}

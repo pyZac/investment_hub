@@ -16,6 +16,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { submitWithdrawalRequestAction, type WithdrawalActionErrorKey } from "./actions";
+import { toDisplayWithCurrency } from "@/lib/display";
 
 const MIN_WITHDRAWAL = 50;
 
@@ -93,7 +94,9 @@ export function BExitForm({
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between gap-2 text-sm">
             <span className="text-muted-foreground">{t("walletBBalanceLabel")}</span>
-            <span className="font-heading font-medium tabular-nums">{walletBBalance}</span>
+            <span className="font-heading font-medium tabular-nums" dir="ltr">
+              {walletBBalance}
+            </span>
           </div>
 
           {disabled ? (
@@ -144,7 +147,9 @@ export function BExitForm({
             ) : (
               <DialogTitle>{t("bExitConfirmTitle")}</DialogTitle>
             )}
-            {!success && <DialogDescription>{t("bExitConfirmDescription", { amount })}</DialogDescription>}
+            {!success && (
+              <DialogDescription>{t("bExitConfirmDescription", { amount: toDisplayWithCurrency(amount) })}</DialogDescription>
+            )}
             {success && <DialogDescription>{t("bExitSuccessDescription")}</DialogDescription>}
           </DialogHeader>
 

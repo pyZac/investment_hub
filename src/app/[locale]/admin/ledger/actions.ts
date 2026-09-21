@@ -4,7 +4,7 @@ import type { LedgerEntryType, Wallet } from "@prisma/client";
 import { requirePermission } from "@/lib/route-guard";
 import { searchUsers } from "@/lib/user-management";
 import { queryLedgerEntries, queryLedgerEntriesForExport, rowsToCsv, type LedgerExplorerFilters } from "@/lib/ledger-explorer";
-import { toDisplay } from "@/lib/display";
+import { toDisplayWithCurrency } from "@/lib/display";
 
 export type LedgerActionErrorKey = "errorForbidden" | "errorGeneric";
 
@@ -83,7 +83,7 @@ export async function queryLedgerEntriesAction(
         walletLabel: r.walletLabel,
         entryTypeLabel: r.entryTypeLabel,
         direction: r.direction,
-        amount: toDisplay(r.amount),
+        amount: toDisplayWithCurrency(r.amount),
         comment: r.comment,
       })),
     };

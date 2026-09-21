@@ -2,7 +2,6 @@ import type { LedgerEntryType, Wallet } from "@prisma/client";
 import { getTranslations } from "next-intl/server";
 import { requireSessionOrRedirect } from "@/lib/page-guard";
 import { listLedgerEntriesForUser, PAGE_SIZE } from "@/lib/transaction-history";
-import { toDisplay } from "@/lib/display";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { TransactionFilters } from "./transaction-filters";
 import { TransactionList } from "./transaction-list";
@@ -88,7 +87,7 @@ export default async function TransactionsPage({
               id: e.id,
               wallet: e.wallet,
               direction: e.direction,
-              amount: toDisplay(e.amount),
+              amount: e.amount,
               entryType: e.entryType,
               description: e.description,
               createdAt: e.createdAt.toISOString(),

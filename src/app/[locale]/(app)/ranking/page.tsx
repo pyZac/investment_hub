@@ -1,7 +1,7 @@
 import { getTranslations } from "next-intl/server";
 import { requireMarketerOrRedirect } from "@/lib/page-guard";
 import { getRankProgressForUser, listActiveRankLadder } from "@/lib/rank";
-import { toDisplay } from "@/lib/display";
+import { toDisplay, toDisplayWithCurrency } from "@/lib/display";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { RankProgressPanel, type DashboardRankProgress } from "@/components/rank-progress-panel";
 import { RankLadder } from "./rank-ladder";
@@ -54,9 +54,9 @@ export default async function RankingPage() {
             ranks={ladder.map((r) => ({
               id: r.id,
               rankName: r.rankName,
-              mrvRequired: toDisplay(r.mrvRequired),
+              mrvRequired: toDisplayWithCurrency(r.mrvRequired),
               directReferralsRequired: r.directReferralsRequired,
-              rewardAmount: toDisplay(r.rewardAmount),
+              rewardAmount: toDisplayWithCurrency(r.rewardAmount),
               rewardType: r.rewardType,
               rankOrder: r.rankOrder,
             }))}

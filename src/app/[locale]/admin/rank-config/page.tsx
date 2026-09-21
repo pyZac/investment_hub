@@ -2,6 +2,7 @@ import { getTranslations, getLocale } from "next-intl/server";
 import { requirePermissionOrRedirect } from "@/lib/page-guard";
 import { listRankConfigs, listRankConfigHistory } from "@/lib/rank";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { toDisplayWithCurrency } from "@/lib/display";
 import { RankList } from "./rank-list";
 import { AddRankForm } from "./add-rank-form";
 import { RankHistoryList } from "./rank-history-list";
@@ -63,9 +64,9 @@ export default async function AdminRankConfigPage() {
             initialHistory={history.map((r) => ({
               id: r.id,
               rankName: r.rankName,
-              mrvRequired: r.mrvRequired.toString(),
+              mrvRequired: toDisplayWithCurrency(r.mrvRequired),
               directReferralsRequired: r.directReferralsRequired,
-              rewardAmount: r.rewardAmount.toString(),
+              rewardAmount: toDisplayWithCurrency(r.rewardAmount),
               rewardType: r.rewardType,
               rankOrder: r.rankOrder,
               effectiveFrom: r.effectiveFrom.toISOString(),

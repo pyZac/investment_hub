@@ -1,54 +1,63 @@
-# Session todo — richer transaction labels + hide admin from transfer search
+# Session todo — $ + comma formatting for all displayed monetary amounts
 
 ## Status: complete
 
-## FIX 1a — Transfer descriptions
-`USER_TRANSFER_SENT`/`USER_TRANSFER_RECEIVED` ledger rows already stored
-`metadata: { counterpartyId, counterpartyName }` at write time
-(user-transfer.ts) — no join needed. `transaction-history.ts`'s
-`buildDescription` now reads it back (defensively narrowed, since
-`metadata` is untyped JSON at the Prisma level) and renders "Transfer
-sent to {name}" / "Transfer received from {name}", falling back to the
-plain "Transfer Sent"/"Transfer Received" label if metadata is ever
-missing or malformed.
+## Approach
+Added `toDisplayWithCurrency()` to `src/lib/display.ts`, built on top of the
+existing `toDisplay()` (reuses its round-half-up 2dp rounding, no
+duplicated Decimal logic). `toDisplay()` itself is UNCHANGED — several
+call sites feed its output straight into `Number(...)` for live form
+validation/math (withdrawable caps, zero-checks, progress-bar widths) or
+into an editable `<input>`'s initial value (package/rank edit dialogs);
+a "$10,000.00" string would parse as NaN there, silently breaking
+withdrawal limits and edit forms. This was the key finding driving the
+whole approach: swap only the call sites that are genuinely display-only,
+never a shared prop also used for parsing or editing.
 
-## FIX 1b — Direct Commission descriptions
-DIRECT_COMMISSION/DIRECT_SAVING's `referenceId` is the investment id
-belonging to the REFERRED BUYER, not the sponsor receiving the entry
-(direct-commission.ts). Extended the existing batched investment lookup
-in `listLedgerEntriesForUser` to also select `investment.user.name` (the
-buyer). New format: "Direct Commission from {BuyerName}'s investment —
-{PackageName}" (and "Direct Commission (Saved) from ..." for
-DIRECT_SAVING, reusing ENTRY_TYPE_LABELS as the prefix so both entry
-types share one code path). DAILY_INTEREST/CAPITAL_RELEASE keep their
-existing "{Label} — {PackageName}" format unchanged — their referenced
-investment IS the viewing user's own, so naming the buyer would just be
-naming themselves.
+For every dual-use case found (transfer-panel.tsx, transfer-form.tsx,
+b-exit-form.tsx, binary-panel.tsx x2, rank-progress-panel.tsx,
+package-list.tsx, rank-list.tsx), the fix formats only at the actual
+render spot inside the component, leaving the underlying prop/state
+plain so Number()/editable-input logic keeps working unchanged.
 
-## FIX 2 — Hide admin from recipient search
-`searchTransferRecipients` (user-transfer.ts) adds `role: { not: "ADMIN" }`
-to its `where` clause, alongside the existing suspendedAt/self exclusions.
+Left deliberately untouched (data-interchange, not UI screens):
+statement.ts's CSV export, admin ledger-explorer.ts's raw CSV export.
+Commission/interest-rate config screens' percentage figures (%) are not
+dollar amounts and were confirmed unaffected.
+
+Also fixed as a side effect: `wallet-card.tsx` and `credit-form.tsx` etc.
+had hardcoded raw un-rounded 8-decimal-place amounts in several admin
+list screens (`recent-credits-list`, `pending-queue`, `decision-history`,
+`package-list`, `user-detail-panel`, `rank-list`, `rank-history-list`) —
+these weren't just missing commas, they were never rounded to 2dp
+display precision at all. All fixed as part of this same sweep.
+
+## Files touched (36 non-test files + display.ts/display.test.ts)
+User-facing: dashboard, packages, investments, withdrawals, transfer,
+transactions, referrals, ranking, binary-tree pages/components.
+Admin-facing: overview, credits, withdrawals, packages, rank-config,
+solvency, users, ledger, manual-adjustment pages/components.
 
 ## Tests
-- transaction-history.test.ts: DIRECT_COMMISSION/DIRECT_SAVING tests now
-  use a distinct sponsor + buyer (not the same user) to actually exercise
-  the new buyer-name lookup, asserting the exact new description string;
-  3 new tests for transfer descriptions (sent side, received side,
-  fallback when metadata missing/malformed).
-- user-transfer.test.ts: 2 new tests — excludes a freshly-created
-  ADMIN-role user even when name/email matches, and excludes the real
-  seeded main admin specifically (by both name and email search).
+display.test.ts: 15 new tests for toDisplayWithCurrency — comma at 1000
+boundary, multiple commas for millions, no comma under 1000, zero,
+negative-value sign-before-$ ordering, half-up rounding through the
+currency formatter, string input, idempotent re-formatting of an
+already-2dp string, non-mutation of the source Decimal, and a regression
+guard confirming toDisplay's own output is completely unchanged.
 
 ## Verification
 - tsc --noEmit clean.
-- Full suite: 582 passed, 1 pre-existing documented reconciliation
-  exception (drift -27.33841602, same known artifact from every prior
-  session — unrelated), 1 skipped.
-- Manual EN+AR browser verification against the running app: real
-  sponsor+buyer Direct Commission purchase shows "Direct Commission from
-  Manual Verify Buyer's investment — {package name}"; real sender/
-  recipient transfer shows "Transfer sent to {name}" and "Transfer
-  received from {name}" on the correct sides; searchTransferRecipients
-  confirmed to exclude the real seeded main admin by both name and email
-  search. Scratch data cleaned up, reconciliation re-checked clean (only
-  the known artifact).
+- Full suite: 593 passed, 1 pre-existing documented reconciliation
+  exception (drift -27.33841602, same known artifact as every prior
+  session — unrelated to this UI-only change), 1 skipped.
+- Manual EN+AR browser verification with a real user funded across all
+  4 wallets (up to $1,000,000) plus a real Direct Commission payout:
+  dashboard, packages, withdrawals, transfer, and transactions pages all
+  show correctly comma-formatted "$X,XXX,XXX.XX" amounts in both
+  locales, Western numerals preserved in Arabic, sign+$ ordering
+  confirmed correct under dir="ltr" wrappers (e.g. "+$625.00", not
+  "625.00+$" or "$+625.00"), and the transfer-amount `<input>` field
+  confirmed to remain plain/editable (not pre-filled with a
+  currency-formatted, unparseable string). Scratch data cleaned up,
+  reconciliation re-checked clean (only the known artifact).

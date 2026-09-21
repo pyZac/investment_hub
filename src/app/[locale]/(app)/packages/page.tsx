@@ -2,7 +2,7 @@ import { getTranslations } from "next-intl/server";
 import { requireSessionOrRedirect } from "@/lib/page-guard";
 import { listPurchasablePackages } from "@/lib/packages";
 import { getWalletBalance } from "@/lib/wallets";
-import { toDisplay } from "@/lib/display";
+import { toDisplayWithCurrency } from "@/lib/display";
 import { PackageGrid } from "./package-grid";
 
 export default async function PackagesPage() {
@@ -24,13 +24,15 @@ export default async function PackagesPage() {
           </div>
           <div className="inline-flex items-baseline gap-2 rounded-lg bg-muted/60 px-4 py-2.5">
             <span className="text-sm text-muted-foreground">{t("walletBBalance")}</span>
-            <span className="text-lg font-semibold tabular-nums">{toDisplay(walletB)}</span>
+            <span className="text-lg font-semibold tabular-nums" dir="ltr">
+              {toDisplayWithCurrency(walletB)}
+            </span>
           </div>
         </div>
 
         <PackageGrid
-          packages={packages.map((p) => ({ id: p.id, name: p.name, amount: toDisplay(p.amount) }))}
-          walletBBalance={toDisplay(walletB)}
+          packages={packages.map((p) => ({ id: p.id, name: p.name, amount: toDisplayWithCurrency(p.amount) }))}
+          walletBBalance={toDisplayWithCurrency(walletB)}
         />
       </div>
     </div>

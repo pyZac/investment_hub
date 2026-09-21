@@ -33,7 +33,9 @@ export function WalletCard({
         </div>
       </CardHeader>
       <CardContent className="flex-1">
-        <p className="font-heading text-2xl font-semibold tabular-nums">${amount}</p>
+        <p className="font-heading text-2xl font-semibold tabular-nums" dir="ltr">
+          {amount}
+        </p>
       </CardContent>
       {footer ? <CardFooter>{footer}</CardFooter> : null}
     </Card>

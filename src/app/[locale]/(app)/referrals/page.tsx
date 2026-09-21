@@ -4,7 +4,6 @@ import { getTranslations, getLocale } from "next-intl/server";
 import { requireMarketerOrRedirect } from "@/lib/page-guard";
 import { listReferralsForUser } from "@/lib/users";
 import { listDirectCommissionHistoryForUser } from "@/lib/direct-commission";
-import { toDisplay } from "@/lib/display";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { ReferralCodeCard } from "./referral-code-card";
 import { ReferralsList } from "./referrals-list";
@@ -88,7 +87,7 @@ export default async function ReferralsPage() {
             entries={history.map((h) => ({
               id: h.id,
               wallet: h.wallet as "C" | "SAVING",
-              amount: toDisplay(h.amount),
+              amount: h.amount.toString(),
               createdAt: h.createdAt.toISOString(),
             }))}
             locale={locale}

@@ -1,6 +1,7 @@
 import { Trophy } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { Badge } from "@/components/ui/badge";
+import { toDisplayWithCurrency } from "@/lib/display";
 
 export type DashboardRankProgress = {
   currentRankName: string | null;
@@ -82,8 +83,8 @@ export async function RankProgressPanel({ progress }: { progress: DashboardRankP
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <ProgressBar
           label={t("rankMrvBarLabel")}
-          currentDisplay={progress.currentMrv}
-          thresholdDisplay={progress.mrvRequired ?? "0"}
+          currentDisplay={toDisplayWithCurrency(progress.currentMrv)}
+          thresholdDisplay={toDisplayWithCurrency(progress.mrvRequired ?? "0")}
           widthPct={mrvWidthPct}
         />
         <ProgressBar

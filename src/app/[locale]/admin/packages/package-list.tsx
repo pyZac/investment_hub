@@ -12,6 +12,7 @@ import {
   type PackageActionErrorKey,
 } from "./actions";
 import { EditPackageDialog } from "./edit-package-dialog";
+import { toDisplayWithCurrency } from "@/lib/display";
 
 type PackageRow = {
   id: string;
@@ -85,7 +86,7 @@ export function PackageList({ initialPackages, locale }: { initialPackages: Pack
                   )}
                 </td>
                 <td className="px-3 py-2 font-heading font-semibold tabular-nums" dir="ltr">
-                  {pkg.amount}
+                  {toDisplayWithCurrency(pkg.amount)}
                 </td>
                 <td className="px-3 py-2">
                   <Badge variant={pkg.isActive ? "success" : "destructive"}>

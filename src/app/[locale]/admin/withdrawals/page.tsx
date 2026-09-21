@@ -2,6 +2,7 @@ import { getTranslations, getLocale } from "next-intl/server";
 import { requirePermissionOrRedirect } from "@/lib/page-guard";
 import { listPendingWithdrawalRequests, listDecidedWithdrawalRequests } from "@/lib/withdrawal-requests";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { toDisplayWithCurrency } from "@/lib/display";
 import { PendingQueue } from "./pending-queue";
 import { DecisionHistory } from "./decision-history";
 
@@ -33,9 +34,9 @@ export default async function AdminWithdrawalsPage() {
               id: r.id,
               userName: r.userName,
               userEmail: r.userEmail,
-              amount: r.amount.toString(),
+              amount: toDisplayWithCurrency(r.amount),
               requestedAt: r.requestedAt.toISOString(),
-              walletBBalance: r.walletBBalance.toString(),
+              walletBBalance: toDisplayWithCurrency(r.walletBBalance),
             }))}
             locale={locale}
           />
@@ -52,7 +53,7 @@ export default async function AdminWithdrawalsPage() {
               id: r.id,
               userName: r.userName,
               userEmail: r.userEmail,
-              amount: r.amount.toString(),
+              amount: toDisplayWithCurrency(r.amount),
               status: r.status as "APPROVED" | "REJECTED",
               requestedAt: r.requestedAt.toISOString(),
               decidedAt: r.decidedAt?.toISOString() ?? null,

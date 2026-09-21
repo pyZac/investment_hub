@@ -5,6 +5,7 @@ import { CalendarClock, CheckCircle2, AlertTriangle, History } from "lucide-reac
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { QualificationFailureReason } from "@/lib/binary-cycle";
+import { toDisplayWithCurrency } from "@/lib/display";
 
 export type LatestBinaryCycle = {
   weekStart: string;
@@ -37,7 +38,9 @@ function VolumeBar({
     <div className="space-y-1.5">
       <div className="flex flex-row items-center justify-between gap-2">
         <span className="text-sm font-medium">{label}</span>
-        <span className="text-sm font-semibold tabular-nums">{value}</span>
+        <span className="text-sm font-semibold tabular-nums" dir="ltr">
+          {toDisplayWithCurrency(value)}
+        </span>
       </div>
       <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
         <div
@@ -117,19 +120,27 @@ export function BinaryPanel({ cycle, daysUntilClose }: { cycle: LatestBinaryCycl
         <div className="grid grid-cols-2 gap-4 border-t border-border/60 pt-4 sm:grid-cols-4">
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">{t("matchedVolumeLabel")}</p>
-            <p className="text-lg font-semibold tabular-nums">{cycle.matchedVolume}</p>
+            <p className="text-lg font-semibold tabular-nums" dir="ltr">
+              {toDisplayWithCurrency(cycle.matchedVolume)}
+            </p>
           </div>
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">{t("commissionPaidLabel")}</p>
-            <p className="text-lg font-semibold tabular-nums">{cycle.commissionPaid}</p>
+            <p className="text-lg font-semibold tabular-nums" dir="ltr">
+              {toDisplayWithCurrency(cycle.commissionPaid)}
+            </p>
           </div>
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">{t("carryForwardLeftLabel")}</p>
-            <p className="text-lg font-semibold tabular-nums">{cycle.carryLeft}</p>
+            <p className="text-lg font-semibold tabular-nums" dir="ltr">
+              {toDisplayWithCurrency(cycle.carryLeft)}
+            </p>
           </div>
           <div className="space-y-1">
             <p className="text-xs text-muted-foreground">{t("carryForwardRightLabel")}</p>
-            <p className="text-lg font-semibold tabular-nums">{cycle.carryRight}</p>
+            <p className="text-lg font-semibold tabular-nums" dir="ltr">
+              {toDisplayWithCurrency(cycle.carryRight)}
+            </p>
           </div>
         </div>
       </CardContent>

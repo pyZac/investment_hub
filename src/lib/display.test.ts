@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Prisma } from "@prisma/client";
-import { toDisplay, formatDate } from "./display";
+import { toDisplay, toDisplayWithCurrency, formatDate } from "./display";
 
 describe("toDisplay", () => {
   it("formats a standard value to 2 decimal places", () => {
@@ -42,6 +42,58 @@ describe("toDisplay", () => {
     toDisplay(original);
 
     expect(original.toString()).toBe(originalString);
+  });
+});
+
+describe("toDisplayWithCurrency", () => {
+  it("adds a $ prefix with no thousands separator under 1000", () => {
+    expect(toDisplayWithCurrency(new Prisma.Decimal("104.5"))).toBe("$104.50");
+  });
+
+  it("inserts a comma at the thousands boundary", () => {
+    expect(toDisplayWithCurrency(new Prisma.Decimal("10000"))).toBe("$10,000.00");
+  });
+
+  it("inserts commas at every power of 1000 for a large value", () => {
+    expect(toDisplayWithCurrency(new Prisma.Decimal("1000000"))).toBe("$1,000,000.00");
+  });
+
+  it("handles a value just under a thousands boundary", () => {
+    expect(toDisplayWithCurrency(new Prisma.Decimal("999.99"))).toBe("$999.99");
+  });
+
+  it("formats zero as $0.00, no comma", () => {
+    expect(toDisplayWithCurrency(new Prisma.Decimal(0))).toBe("$0.00");
+  });
+
+  it("puts the sign before the $ for a negative value, not after", () => {
+    expect(toDisplayWithCurrency(new Prisma.Decimal("-1234.56"))).toBe("-$1,234.56");
+  });
+
+  it("rounds half up before formatting (104.995 -> $105.00)", () => {
+    expect(toDisplayWithCurrency(new Prisma.Decimal("104.995"))).toBe("$105.00");
+  });
+
+  it("accepts a numeric string input directly", () => {
+    expect(toDisplayWithCurrency("50000")).toBe("$50,000.00");
+  });
+
+  it("is idempotent-safe against an already-toDisplay'd 2dp string", () => {
+    const twoDp = toDisplay(new Prisma.Decimal("12345.678"));
+    expect(toDisplayWithCurrency(twoDp)).toBe("$12,345.68");
+  });
+
+  it("never mutates the original Decimal instance", () => {
+    const original = new Prisma.Decimal("10000.005");
+    const originalString = original.toString();
+
+    toDisplayWithCurrency(original);
+
+    expect(original.toString()).toBe(originalString);
+  });
+
+  it("does not change toDisplay's own output (regression guard: two independent functions, not one mutated in place)", () => {
+    expect(toDisplay(new Prisma.Decimal("10000"))).toBe("10000.00");
   });
 });
 

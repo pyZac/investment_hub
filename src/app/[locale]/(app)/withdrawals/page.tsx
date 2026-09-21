@@ -7,7 +7,7 @@ import { listWithdrawalRequestsForUser } from "@/lib/withdrawal-requests";
 import { listSavingLotsForUser } from "@/lib/saving-lots";
 import { isFriday } from "@/lib/interest-rate";
 import { daysUntilNextFriday } from "@/lib/next-friday";
-import { toDisplay } from "@/lib/display";
+import { toDisplay, toDisplayWithCurrency } from "@/lib/display";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { TransferPanel } from "./transfer-panel";
 import { CapitalReleasePanel } from "./capital-release-panel";
@@ -48,19 +48,27 @@ export default async function WithdrawalsPage() {
         <div className="flex flex-wrap gap-3">
           <div className="inline-flex items-baseline gap-2 rounded-lg bg-muted/60 px-4 py-2.5">
             <span className="text-sm text-muted-foreground">Wallet A</span>
-            <span className="font-heading text-lg font-semibold tabular-nums">{toDisplay(walletA)}</span>
+            <span className="font-heading text-lg font-semibold tabular-nums" dir="ltr">
+              {toDisplayWithCurrency(walletA)}
+            </span>
           </div>
           <div className="inline-flex items-baseline gap-2 rounded-lg bg-muted/60 px-4 py-2.5">
             <span className="text-sm text-muted-foreground">Wallet B</span>
-            <span className="font-heading text-lg font-semibold tabular-nums">{toDisplay(walletB)}</span>
+            <span className="font-heading text-lg font-semibold tabular-nums" dir="ltr">
+              {toDisplayWithCurrency(walletB)}
+            </span>
           </div>
           <div className="inline-flex items-baseline gap-2 rounded-lg bg-muted/60 px-4 py-2.5">
             <span className="text-sm text-muted-foreground">Wallet C</span>
-            <span className="font-heading text-lg font-semibold tabular-nums">{toDisplay(walletC)}</span>
+            <span className="font-heading text-lg font-semibold tabular-nums" dir="ltr">
+              {toDisplayWithCurrency(walletC)}
+            </span>
           </div>
           <div className="inline-flex items-baseline gap-2 rounded-lg bg-muted/60 px-4 py-2.5">
             <span className="text-sm text-muted-foreground">SAVING</span>
-            <span className="font-heading text-lg font-semibold tabular-nums">{toDisplay(walletSaving)}</span>
+            <span className="font-heading text-lg font-semibold tabular-nums" dir="ltr">
+              {toDisplayWithCurrency(walletSaving)}
+            </span>
           </div>
         </div>
       </div>
@@ -90,7 +98,7 @@ export default async function WithdrawalsPage() {
           <CapitalReleasePanel
             investments={activeInvestments.map((investment) => ({
               id: investment.id,
-              amount: toDisplay(investment.amount),
+              amount: toDisplayWithCurrency(investment.amount),
               capitalUnlocksAt: investment.capitalUnlocksAt.toISOString(),
             }))}
             now={now.toISOString()}
@@ -110,7 +118,7 @@ export default async function WithdrawalsPage() {
           <SavingLotsList
             lots={savingLots.map((lot) => ({
               id: lot.id,
-              amount: toDisplay(lot.amount),
+              amount: toDisplayWithCurrency(lot.amount),
               createdAt: lot.createdAt.toISOString(),
               unlocksAt: lot.unlocksAt.toISOString(),
               releasedAt: lot.releasedAt?.toISOString() ?? null,
@@ -126,11 +134,11 @@ export default async function WithdrawalsPage() {
           <CardDescription>{t("bExitDescription")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <BExitForm isFriday={friday} daysUntilFriday={daysUntilFriday} walletBBalance={toDisplay(walletB)} locale={locale} />
+          <BExitForm isFriday={friday} daysUntilFriday={daysUntilFriday} walletBBalance={toDisplayWithCurrency(walletB)} locale={locale} />
           <BExitStatusList
             requests={requests.map((r) => ({
               id: r.id,
-              amount: toDisplay(r.amount),
+              amount: toDisplayWithCurrency(r.amount),
               status: r.status,
               requestedAt: r.requestedAt.toISOString(),
               decidedAt: r.decidedAt?.toISOString() ?? null,

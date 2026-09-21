@@ -90,7 +90,9 @@ export function CapitalReleasePanel({
                 <CardTitle className="text-base font-medium">{t("capitalReleaseCardTitle")}</CardTitle>
               </CardHeader>
               <CardContent className="flex-1 space-y-3">
-                <p className="font-heading text-2xl font-bold tabular-nums">{investment.amount}</p>
+                <p className="font-heading text-2xl font-bold tabular-nums" dir="ltr">
+                  {investment.amount}
+                </p>
                 {!unlocked ? (
                   <div className="flex flex-row items-center gap-2 text-sm text-muted-foreground">
                     <Lock className="size-4 shrink-0" aria-hidden="true" />

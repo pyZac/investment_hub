@@ -2,6 +2,7 @@ import { getTranslations, getLocale } from "next-intl/server";
 import { requirePermissionOrRedirect } from "@/lib/page-guard";
 import { listRecentCreditIssuances } from "@/lib/admin-credit";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { toDisplayWithCurrency } from "@/lib/display";
 import { CreditForm } from "./credit-form";
 import { RecentCreditsList } from "./recent-credits-list";
 
@@ -40,7 +41,7 @@ export default async function AdminCreditsPage() {
               targetUserName: c.targetUserName,
               targetUserEmail: c.targetUserEmail,
               adminName: c.adminName,
-              amount: c.amount?.toString() ?? "0",
+              amount: toDisplayWithCurrency(c.amount ?? 0),
               reason: c.reason,
               createdAt: c.createdAt.toISOString(),
             }))}

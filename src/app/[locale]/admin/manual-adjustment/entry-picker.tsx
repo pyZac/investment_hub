@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useTranslations, useFormatter } from "next-intl";
 import { listUserLedgerEntriesAction, type LedgerEntryRow } from "./actions";
+import { toDisplayWithCurrency } from "@/lib/display";
 
 export function EntryPicker({
   userId,
@@ -56,7 +57,7 @@ export function EntryPicker({
             <div className="flex flex-col items-end gap-0.5">
               <span className="font-heading font-semibold tabular-nums" dir="ltr">
                 {entry.direction === "CREDIT" ? "+" : "−"}
-                {entry.amount}
+                {toDisplayWithCurrency(entry.amount)}
               </span>
               <span className="text-xs tabular-nums text-muted-foreground whitespace-nowrap">
                 {format.dateTime(new Date(entry.createdAt), { dateStyle: "medium", timeStyle: "short" })}

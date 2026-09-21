@@ -4,7 +4,7 @@ import { useTranslations } from "next-intl";
 import { Gift } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { formatDate } from "@/lib/display";
+import { formatDate, toDisplayWithCurrency } from "@/lib/display";
 
 type CommissionEntry = {
   id: string;
@@ -34,7 +34,7 @@ export function CommissionHistoryList({ entries, locale }: { entries: Commission
           <CardContent className="flex flex-row items-center justify-between gap-2 py-4">
             <div className="space-y-1">
               <span dir="ltr" className="font-heading text-lg font-semibold tabular-nums text-success">
-                +{entry.amount}
+                +{toDisplayWithCurrency(entry.amount)}
               </span>
               <p className="text-xs text-muted-foreground">{formatDate(new Date(entry.createdAt), locale)}</p>
             </div>

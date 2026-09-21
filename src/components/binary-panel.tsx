@@ -3,6 +3,7 @@ import { getTranslations } from "next-intl/server";
 import { Badge } from "@/components/ui/badge";
 import { CountdownRing } from "@/components/countdown-ring";
 import type { QualificationFailureReason } from "@/lib/binary-cycle";
+import { toDisplayWithCurrency } from "@/lib/display";
 
 export type DashboardBinaryCycle = {
   leftVolume: string;
@@ -33,14 +34,18 @@ function VolumeBar({
     <div className="space-y-1.5">
       <div className="flex flex-row items-center justify-between gap-2">
         <span className="text-sm font-medium">{label}</span>
-        <span className="text-sm font-semibold tabular-nums">{value}</span>
+        <span className="text-sm font-semibold tabular-nums" dir="ltr">
+          {toDisplayWithCurrency(value)}
+        </span>
       </div>
       <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
         <div className="h-full rounded-full bg-brand" style={{ width: `${widthPct}%` }} />
       </div>
       <div className="flex flex-row items-center justify-between gap-2">
         <span className="text-xs text-muted-foreground">{carryLabel}</span>
-        <span className="text-xs tabular-nums text-muted-foreground">{carry}</span>
+        <span className="text-xs tabular-nums text-muted-foreground" dir="ltr">
+          {toDisplayWithCurrency(carry)}
+        </span>
       </div>
     </div>
   );

@@ -15,6 +15,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { reverseLedgerTransactionAction, type AdjustmentActionErrorKey, type TransactionRow } from "./actions";
+import { toDisplayWithCurrency } from "@/lib/display";
 
 function opposite(direction: "CREDIT" | "DEBIT"): "CREDIT" | "DEBIT" {
   return direction === "CREDIT" ? "DEBIT" : "CREDIT";
@@ -90,7 +91,7 @@ export function ReversalConfirmDialog({
                   </span>
                   <span className="shrink-0 font-heading font-semibold tabular-nums" dir="ltr">
                     {opposite(row.direction) === "CREDIT" ? "+" : "−"}
-                    {row.amount}
+                    {toDisplayWithCurrency(row.amount)}
                   </span>
                 </div>
               ))}

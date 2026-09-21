@@ -1,7 +1,7 @@
 import type { Investment, Package } from "@prisma/client";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { CountdownRing } from "@/components/countdown-ring";
-import { toDisplay } from "@/lib/display";
+import { toDisplayWithCurrency } from "@/lib/display";
 
 type InvestmentWithPackage = Investment & { package: Package };
 
@@ -41,8 +41,8 @@ export function InvestmentLockCard({
     <Card className="border-border/60 shadow-sm transition-shadow hover:shadow-md hover:shadow-black/20">
       <CardHeader className="pb-2">
         <CardTitle className="text-base font-medium">{investment.package.name}</CardTitle>
-        <p className="font-heading text-xl font-semibold tabular-nums">
-          {toDisplay(investment.amount)}
+        <p className="font-heading text-xl font-semibold tabular-nums" dir="ltr">
+          {toDisplayWithCurrency(investment.amount)}
         </p>
       </CardHeader>
       <CardContent className="flex items-center justify-center gap-8 pt-2">

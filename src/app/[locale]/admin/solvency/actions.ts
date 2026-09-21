@@ -2,6 +2,7 @@
 
 import { requirePermission } from "@/lib/route-guard";
 import { getSolvencyOverview } from "@/lib/solvency";
+import { toDisplayWithCurrency } from "@/lib/display";
 
 export type SolvencyErrorKey = "errorForbidden" | "errorGeneric";
 
@@ -34,16 +35,16 @@ export async function getSolvencyOverviewAction(): Promise<SolvencyOverviewResul
     return {
       ok: true,
       overview: {
-        totalCreditIssued: overview.totalCreditIssued.toString(),
-        totalLiabilities: overview.totalLiabilities.toString(),
+        totalCreditIssued: toDisplayWithCurrency(overview.totalCreditIssued),
+        totalLiabilities: toDisplayWithCurrency(overview.totalLiabilities),
         liabilitiesBreakdown: {
-          walletA: overview.liabilitiesBreakdown.walletA.toString(),
-          walletB: overview.liabilitiesBreakdown.walletB.toString(),
-          walletC: overview.liabilitiesBreakdown.walletC.toString(),
-          walletSaving: overview.liabilitiesBreakdown.walletSaving.toString(),
+          walletA: toDisplayWithCurrency(overview.liabilitiesBreakdown.walletA),
+          walletB: toDisplayWithCurrency(overview.liabilitiesBreakdown.walletB),
+          walletC: toDisplayWithCurrency(overview.liabilitiesBreakdown.walletC),
+          walletSaving: toDisplayWithCurrency(overview.liabilitiesBreakdown.walletSaving),
         },
         solvencyRatio: overview.solvencyRatio?.toString() ?? null,
-        projectedLiabilities30d: overview.projectedLiabilities30d.toString(),
+        projectedLiabilities30d: toDisplayWithCurrency(overview.projectedLiabilities30d),
       },
     };
   } catch (err) {

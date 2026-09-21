@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { listRankConfigsAction, type RankActionErrorKey } from "./actions";
 import { EditRankDialog } from "./edit-rank-dialog";
+import { toDisplayWithCurrency } from "@/lib/display";
 
 export type RankRow = {
   id: string;
@@ -73,13 +74,13 @@ export function RankList({ initialRanks, locale }: { initialRanks: RankRow[]; lo
                   )}
                 </td>
                 <td className="px-3 py-2 font-heading font-semibold tabular-nums" dir="ltr">
-                  {rank.mrvRequired}
+                  {toDisplayWithCurrency(rank.mrvRequired)}
                 </td>
                 <td className="px-3 py-2 tabular-nums" dir="ltr">
                   {rank.directReferralsRequired}
                 </td>
                 <td className="px-3 py-2 tabular-nums" dir="ltr">
-                  {rank.rewardAmount}
+                  {toDisplayWithCurrency(rank.rewardAmount)}
                   {rank.rewardType === "CASH_OR_TRIP" && (
                     <span className="ms-1.5 text-xs text-muted-foreground">({t("cashOrTrip")})</span>
                   )}

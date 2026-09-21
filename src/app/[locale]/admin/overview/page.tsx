@@ -1,7 +1,7 @@
 import { getTranslations, getLocale } from "next-intl/server";
 import { requireMainAdminOrRedirect } from "@/lib/page-guard";
 import { getAdminOverview } from "@/lib/admin-overview";
-import { toDisplay } from "@/lib/display";
+import { toDisplayWithCurrency } from "@/lib/display";
 import { InvestmentsOverviewSection } from "./investments-overview-section";
 import { FinancialHealthSection } from "./financial-health-section";
 import { UserActivitySection } from "./user-activity-section";
@@ -23,27 +23,27 @@ export default async function AdminOverviewPage() {
 
       <InvestmentsOverviewSection
         activeCount={overview.investments.activeCount}
-        activeTotalValue={toDisplay(overview.investments.activeTotalValue)}
-        totalLockedCapital={toDisplay(overview.investments.totalLockedCapital)}
+        activeTotalValue={toDisplayWithCurrency(overview.investments.activeTotalValue)}
+        totalLockedCapital={toDisplayWithCurrency(overview.investments.totalLockedCapital)}
         byPackage={overview.investments.byPackage.map((row) => ({
           packageId: row.packageId,
           packageName: row.packageName,
           investmentCount: row.investmentCount,
-          totalValue: toDisplay(row.totalValue),
+          totalValue: toDisplayWithCurrency(row.totalValue),
         }))}
         upcomingReleases={overview.investments.upcomingReleases.map((row) => ({
           investmentId: row.investmentId,
           userName: row.userName,
           packageName: row.packageName,
-          amount: toDisplay(row.amount),
+          amount: toDisplayWithCurrency(row.amount),
           capitalUnlocksAt: row.capitalUnlocksAt.toISOString(),
         }))}
         locale={locale}
       />
 
       <FinancialHealthSection
-        totalCreditIssued={toDisplay(overview.financialHealth.totalCreditIssued)}
-        totalLiabilities={toDisplay(overview.financialHealth.totalLiabilities)}
+        totalCreditIssued={toDisplayWithCurrency(overview.financialHealth.totalCreditIssued)}
+        totalLiabilities={toDisplayWithCurrency(overview.financialHealth.totalLiabilities)}
         solvencyRatio={overview.financialHealth.solvencyRatio?.toString() ?? null}
       />
 

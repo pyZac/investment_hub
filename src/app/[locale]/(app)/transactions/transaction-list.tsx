@@ -5,7 +5,7 @@ import { useTranslations, useLocale } from "next-intl";
 import { Receipt } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { formatDate } from "@/lib/display";
+import { formatDate, toDisplayWithCurrency } from "@/lib/display";
 import { ENTRY_TYPE_LABELS } from "@/lib/transaction-history";
 
 type TransactionRow = {
@@ -60,7 +60,7 @@ export function TransactionList({ entries }: { entries: TransactionRow[] }) {
               }`}
             >
               {entry.direction === "CREDIT" ? "+" : "−"}
-              {entry.amount}
+              {toDisplayWithCurrency(entry.amount)}
             </span>
           </CardContent>
         </Card>

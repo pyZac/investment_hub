@@ -16,6 +16,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { transferAtoBAction, transferCtoBAction, type WithdrawalActionErrorKey } from "./actions";
+import { toDisplayWithCurrency } from "@/lib/display";
 
 type TransferDirection = "A" | "C";
 
@@ -103,7 +104,9 @@ function TransferCard({
         <CardContent className="flex-1 space-y-4">
           <div className="flex items-center justify-between gap-2 text-sm">
             <span className="text-muted-foreground">{t("availableLabel")}</span>
-            <span className="font-heading font-medium tabular-nums">{withdrawable}</span>
+            <span className="font-heading font-medium tabular-nums" dir="ltr">
+              {toDisplayWithCurrency(withdrawable)}
+            </span>
           </div>
 
           {disabled ? (
@@ -156,8 +159,8 @@ function TransferCard({
             {!success && (
               <DialogDescription>
                 {direction === "A"
-                  ? t("transferConfirmDescriptionA", { amount })
-                  : t("transferConfirmDescriptionC", { amount })}
+                  ? t("transferConfirmDescriptionA", { amount: toDisplayWithCurrency(amount) })
+                  : t("transferConfirmDescriptionC", { amount: toDisplayWithCurrency(amount) })}
               </DialogDescription>
             )}
             {success && <DialogDescription>{t("transferSuccessDescription")}</DialogDescription>}

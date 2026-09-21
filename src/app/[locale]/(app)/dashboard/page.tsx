@@ -10,7 +10,7 @@ import {
   type QualificationFailureReason,
 } from "@/lib/binary-cycle";
 import { getRankProgressForUser } from "@/lib/rank";
-import { toDisplay } from "@/lib/display";
+import { toDisplay, toDisplayWithCurrency } from "@/lib/display";
 import { WalletCard, TodayProfitFooter } from "@/components/wallet-card";
 import { DailyProfitChart } from "@/components/daily-profit-chart";
 import { InvestmentsPanel } from "@/components/investments-panel";
@@ -71,7 +71,7 @@ export default async function DashboardPage() {
         <WalletCard
           label={t("walletALabel")}
           subLabel={t("walletASubLabel")}
-          amount={toDisplay(wallets.A)}
+          amount={toDisplayWithCurrency(wallets.A)}
           footer={
             <TodayProfitFooter
               amount={toDisplay(todayProfitA)}
@@ -84,17 +84,17 @@ export default async function DashboardPage() {
         <WalletCard
           label={t("walletBLabel")}
           subLabel={t("walletBSubLabel")}
-          amount={toDisplay(wallets.B)}
+          amount={toDisplayWithCurrency(wallets.B)}
         />
         <WalletCard
           label={t("walletCLabel")}
           subLabel={t("walletCSubLabel")}
-          amount={toDisplay(wallets.C)}
+          amount={toDisplayWithCurrency(wallets.C)}
         />
         <WalletCard
           label={t("walletSavingLabel")}
           subLabel={t("walletSavingSubLabel")}
-          amount={toDisplay(wallets.SAVING)}
+          amount={toDisplayWithCurrency(wallets.SAVING)}
         />
       </div>
 

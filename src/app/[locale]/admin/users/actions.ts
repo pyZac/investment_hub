@@ -11,6 +11,7 @@ import {
 } from "@/lib/users";
 import { searchUsers, getUserDetail } from "@/lib/user-management";
 import { adminResetPassword, CannotResetMainAdminPasswordError } from "@/lib/security-questions";
+import { toDisplayWithCurrency } from "@/lib/display";
 
 export type UserManagementActionErrorKey =
   | "errorSponsorNotFound"
@@ -143,10 +144,10 @@ export async function getUserDetailAction(targetUserId: string): Promise<UserDet
         suspendedAt: detail.suspendedAt?.toISOString() ?? null,
         sponsorId: detail.sponsorId,
         wallets: {
-          A: detail.wallets.A.toString(),
-          B: detail.wallets.B.toString(),
-          C: detail.wallets.C.toString(),
-          SAVING: detail.wallets.SAVING.toString(),
+          A: toDisplayWithCurrency(detail.wallets.A),
+          B: toDisplayWithCurrency(detail.wallets.B),
+          C: toDisplayWithCurrency(detail.wallets.C),
+          SAVING: toDisplayWithCurrency(detail.wallets.SAVING),
         },
         activeInvestmentCount: detail.activeInvestmentCount,
         referralCount: detail.referralCount,
