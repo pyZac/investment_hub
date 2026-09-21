@@ -90,7 +90,7 @@ export default async function TransactionsPage({
               direction: e.direction,
               amount: toDisplay(e.amount),
               entryType: e.entryType,
-              comment: e.comment,
+              description: e.description,
               createdAt: e.createdAt.toISOString(),
             }))}
           />

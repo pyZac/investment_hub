@@ -33,20 +33,22 @@ export async function withdrawableProfitA(userId: string): Promise<Prisma.Decima
 }
 
 /**
- * Wallet C's withdrawable commission: the full C balance minus anything
- * still sitting in the SAVING wallet. The SAVING wallet row already exists
- * per-user (created at signup) but nothing credits it until SCRUM-58 builds
- * the saving_lots unlock job — so this is currently always C's full balance,
- * and will automatically stay correct once SCRUM-58 lands with no change
- * needed here, since it reads the live WalletAccount balance rather than
- * assuming zero.
+ * Wallet C's withdrawable commission: the full C balance. SAVING is a
+ * fully separate wallet — Direct Commission credits it independently of C
+ * (a distinct 3% split, direct-commission.ts), and a saving_lot's release
+ * (saving-lots.ts) DEBITs SAVING and CREDITs C at that point, so SAVING
+ * money never sits "inside" C waiting to be excluded. Previously this
+ * function subtracted the SAVING balance from C, which double-deducted
+ * money C never held — e.g. C=$50, SAVING=$30 wrongly showed only $20
+ * available, when the full $50 in C was genuinely free to transfer. Fixed:
+ * no subtraction, just the live C balance (never negative by construction,
+ * so no floor needed, but Decimal.max kept for symmetry with
+ * withdrawableProfitA's defensive pattern).
  */
 export async function withdrawableC(userId: string): Promise<Prisma.Decimal> {
-  const [walletC, walletSaving] = await Promise.all([
-    prisma.walletAccount.findUniqueOrThrow({ where: { userId_type: { userId, type: "C" } } }),
-    prisma.walletAccount.findUniqueOrThrow({ where: { userId_type: { userId, type: "SAVING" } } }),
-  ]);
+  const walletC = await prisma.walletAccount.findUniqueOrThrow({
+    where: { userId_type: { userId, type: "C" } },
+  });
 
-  const withdrawable = new Prisma.Decimal(walletC.balance).sub(walletSaving.balance);
-  return Prisma.Decimal.max(withdrawable, new Prisma.Decimal(0));
+  return Prisma.Decimal.max(new Prisma.Decimal(walletC.balance), new Prisma.Decimal(0));
 }

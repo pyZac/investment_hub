@@ -14,7 +14,7 @@ type TransactionRow = {
   direction: "CREDIT" | "DEBIT";
   amount: string;
   entryType: LedgerEntryType;
-  comment: string | null;
+  description: string;
   createdAt: string;
 };
 
@@ -51,7 +51,7 @@ export function TransactionList({ entries }: { entries: TransactionRow[] }) {
                 <Badge variant="outline">{walletLabel(entry.wallet)}</Badge>
               </div>
               <p className="text-xs text-muted-foreground">{formatDate(new Date(entry.createdAt), locale)}</p>
-              <p className="text-sm text-muted-foreground">{entry.comment ?? t("commentNone")}</p>
+              <p className="text-sm text-muted-foreground">{entry.description}</p>
             </div>
             <span
               dir="ltr"

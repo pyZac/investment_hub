@@ -26,6 +26,25 @@ export async function releaseDueSavingLots(asOfDate: Date): Promise<void> {
   }
 }
 
+/**
+ * A user's own SAVING lots, newest first, for the withdrawals page's
+ * "when does my SAVING money unlock" visibility (post-phase fix — users
+ * previously had no way to see this). Read-only, no new financial logic:
+ * each lot already exists from Direct Commission's 3% split
+ * (direct-commission.ts) and is released by releaseDueSavingLots above —
+ * this just lists them. `createdAt` is the lock start date, `unlocksAt` is
+ * the release date (3 months from lock start, set once at creation and
+ * never recomputed here). `releasedAt` is null while still locked.
+ * Ownership is enforced by construction — userId is the only filter
+ * (invariant #9).
+ */
+export async function listSavingLotsForUser(userId: string) {
+  return prisma.savingLot.findMany({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
 async function releaseOneLot(lotId: string, userId: string, amount: Prisma.Decimal, asOfDate: Date) {
   const idempotencyKey = `saving_unlock:${lotId}`;
   const comment = `SAVING unlock for lot ${lotId}.`;

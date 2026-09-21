@@ -24,12 +24,14 @@ function TransferCard({
   withdrawable,
   isFriday,
   daysUntilFriday,
+  requiresFriday,
   locale,
 }: {
   direction: TransferDirection;
   withdrawable: string;
   isFriday: boolean;
   daysUntilFriday: number;
+  requiresFriday: boolean;
   locale: string;
 }) {
   const t = useTranslations("Withdrawals");
@@ -87,7 +89,7 @@ function TransferCard({
     });
   }
 
-  const disabled = !isFriday;
+  const disabled = requiresFriday && !isFriday;
 
   return (
     <>
@@ -198,8 +200,22 @@ export function TransferPanel({
 }) {
   return (
     <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-      <TransferCard direction="A" withdrawable={withdrawableA} isFriday={isFriday} daysUntilFriday={daysUntilFriday} locale={locale} />
-      <TransferCard direction="C" withdrawable={withdrawableC} isFriday={isFriday} daysUntilFriday={daysUntilFriday} locale={locale} />
+      <TransferCard
+        direction="A"
+        withdrawable={withdrawableA}
+        isFriday={isFriday}
+        daysUntilFriday={daysUntilFriday}
+        requiresFriday={true}
+        locale={locale}
+      />
+      <TransferCard
+        direction="C"
+        withdrawable={withdrawableC}
+        isFriday={isFriday}
+        daysUntilFriday={daysUntilFriday}
+        requiresFriday={false}
+        locale={locale}
+      />
     </div>
   );
 }

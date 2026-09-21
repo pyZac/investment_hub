@@ -42,7 +42,14 @@ async function makeUser(label: string) {
  * ledger.test.ts) and `postTransaction` always stamps `now()`, so backdating
  * only works by setting it at insert time.
  */
-async function creditEntry(userId: string, wallet: "A" | "B" | "C", entryType: Parameters<typeof postTransaction>[0]["entries"][0]["entryType"], amount: string, createdAt: Date) {
+async function creditEntry(
+  userId: string,
+  wallet: "A" | "B" | "C",
+  entryType: Parameters<typeof postTransaction>[0]["entries"][0]["entryType"],
+  amount: string,
+  createdAt: Date,
+  reference?: { referenceType: string; referenceId: string },
+) {
   const key = `txhistory:${userId}:${crypto.randomUUID()}`;
   await prisma.ledgerEntry.create({
     data: {
@@ -51,9 +58,11 @@ async function creditEntry(userId: string, wallet: "A" | "B" | "C", entryType: P
       direction: "CREDIT",
       amount,
       entryType,
-      comment: `test ${entryType}`,
+      comment: reference ? `Raw-id comment mentioning ${reference.referenceId}` : `test ${entryType}`,
       idempotencyKey: key,
       createdAt,
+      referenceType: reference?.referenceType,
+      referenceId: reference?.referenceId,
     },
   });
   await prisma.ledgerEntry.create({
@@ -66,6 +75,8 @@ async function creditEntry(userId: string, wallet: "A" | "B" | "C", entryType: P
       comment: `test ${entryType}`,
       idempotencyKey: key,
       createdAt,
+      referenceType: reference?.referenceType,
+      referenceId: reference?.referenceId,
     },
   });
 }
@@ -151,6 +162,118 @@ describe("listLedgerEntriesForUser", () => {
     const page = await listLedgerEntriesForUser(user.id, {}, 1);
     expect(page.total).toBe(0);
     expect(page.entries).toHaveLength(0);
+  });
+});
+
+describe("listLedgerEntriesForUser — description (no raw ids exposed to the user)", () => {
+  const createdPackageIds: string[] = [];
+  const createdInvestmentIds: string[] = [];
+
+  afterAll(async () => {
+    await prisma.investment.deleteMany({ where: { id: { in: createdInvestmentIds } } });
+    await prisma.package.deleteMany({ where: { id: { in: createdPackageIds } } });
+  });
+
+  async function makeInvestment(userId: string, packageName: string) {
+    const pkg = await prisma.package.create({ data: { name: packageName, amount: "1000", isActive: true } });
+    createdPackageIds.push(pkg.id);
+    const investment = await prisma.investment.create({
+      data: {
+        userId,
+        packageId: pkg.id,
+        amount: "1000",
+        purchasedAt: new Date("2026-01-01T00:00:00.000Z"),
+        profitStartsAt: new Date("2026-01-08T00:00:00.000Z"),
+        capitalUnlocksAt: new Date("2026-07-01T00:00:00.000Z"),
+        status: "ACTIVE",
+        referenceId: `seed-purchase:${crypto.randomUUID()}`,
+      },
+    });
+    createdInvestmentIds.push(investment.id);
+    return investment;
+  }
+
+  it("DIRECT_COMMISSION description includes the package name, not the raw investment id", async () => {
+    const user = await makeUser("desc-direct-commission");
+    const investment = await makeInvestment(user.id, `Description-Test-Package-${crypto.randomUUID()}`);
+    await creditEntry(user.id, "C", "DIRECT_COMMISSION", "50", new Date(), {
+      referenceType: "investment",
+      referenceId: investment.id,
+    });
+
+    const page = await listLedgerEntriesForUser(user.id, {}, 1);
+    const entry = page.entries.find((e) => e.entryType === "DIRECT_COMMISSION")!;
+
+    expect(entry.description).toContain("Direct Commission");
+    const pkg = await prisma.package.findUniqueOrThrow({ where: { id: investment.packageId } });
+    expect(entry.description).toContain(pkg.name);
+    expect(entry.description).not.toContain(investment.id);
+  });
+
+  it("CAPITAL_RELEASE and DAILY_INTEREST descriptions also include the package name, not the raw id", async () => {
+    const user = await makeUser("desc-capital-daily");
+    const investment = await makeInvestment(user.id, `Description-Test-Package-${crypto.randomUUID()}`);
+    await creditEntry(user.id, "A", "CAPITAL_RELEASE", "1000", new Date(), {
+      referenceType: "investment",
+      referenceId: investment.id,
+    });
+    await creditEntry(user.id, "A", "DAILY_INTEREST", "5", new Date(Date.now() + 1000), {
+      referenceType: "investment",
+      referenceId: investment.id,
+    });
+
+    const page = await listLedgerEntriesForUser(user.id, {}, 1);
+    const pkg = await prisma.package.findUniqueOrThrow({ where: { id: investment.packageId } });
+
+    const capitalRelease = page.entries.find((e) => e.entryType === "CAPITAL_RELEASE")!;
+    expect(capitalRelease.description).toContain(pkg.name);
+    expect(capitalRelease.description).not.toContain(investment.id);
+
+    const dailyInterest = page.entries.find((e) => e.entryType === "DAILY_INTEREST")!;
+    expect(dailyInterest.description).toContain(pkg.name);
+    expect(dailyInterest.description).not.toContain(investment.id);
+  });
+
+  it("falls back to the plain entry-type label when no matching investment is found", async () => {
+    const user = await makeUser("desc-fallback");
+    await creditEntry(user.id, "C", "DIRECT_COMMISSION", "10", new Date(), {
+      referenceType: "investment",
+      referenceId: "nonexistent-investment-id",
+    });
+
+    const page = await listLedgerEntriesForUser(user.id, {}, 1);
+    const entry = page.entries.find((e) => e.entryType === "DIRECT_COMMISSION")!;
+    expect(entry.description).toBe("Direct Commission");
+  });
+
+  it("SAVING_UNLOCK and WITHDRAWAL_OUT descriptions never expose a raw id either (no natural name substitute)", async () => {
+    const user = await makeUser("desc-no-substitute");
+    await creditEntry(user.id, "C", "SAVING_UNLOCK", "40", new Date(), {
+      referenceType: "saving_lot",
+      referenceId: "some-lot-id-xyz",
+    });
+
+    const page = await listLedgerEntriesForUser(user.id, {}, 1);
+    const entry = page.entries.find((e) => e.entryType === "SAVING_UNLOCK")!;
+    expect(entry.description).toBe("Saving Unlock");
+    expect(entry.description).not.toContain("some-lot-id-xyz");
+  });
+
+  it("does not N+1 query — entries sharing the same investment reuse one batched lookup", async () => {
+    const user = await makeUser("desc-batch");
+    const investment = await makeInvestment(user.id, `Description-Test-Package-${crypto.randomUUID()}`);
+    for (let i = 0; i < 3; i++) {
+      await creditEntry(user.id, "A", "DAILY_INTEREST", "1", new Date(Date.now() + i * 1000), {
+        referenceType: "investment",
+        referenceId: investment.id,
+      });
+    }
+
+    const page = await listLedgerEntriesForUser(user.id, {}, 1);
+    const pkg = await prisma.package.findUniqueOrThrow({ where: { id: investment.packageId } });
+    const dailyInterestEntries = page.entries.filter((e) => e.entryType === "DAILY_INTEREST");
+    expect(dailyInterestEntries.length).toBeGreaterThanOrEqual(3);
+    expect(dailyInterestEntries.every((e) => e.description.includes(pkg.name))).toBe(true);
   });
 });
 

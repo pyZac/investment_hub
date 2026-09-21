@@ -4,6 +4,7 @@ import { getWalletBalance } from "@/lib/wallets";
 import { withdrawableProfitA, withdrawableC } from "@/lib/withdrawable";
 import { listInvestmentsForUser } from "@/lib/investments";
 import { listWithdrawalRequestsForUser } from "@/lib/withdrawal-requests";
+import { listSavingLotsForUser } from "@/lib/saving-lots";
 import { isFriday } from "@/lib/interest-rate";
 import { daysUntilNextFriday } from "@/lib/next-friday";
 import { toDisplay } from "@/lib/display";
@@ -12,6 +13,7 @@ import { TransferPanel } from "./transfer-panel";
 import { CapitalReleasePanel } from "./capital-release-panel";
 import { BExitForm } from "./b-exit-form";
 import { BExitStatusList } from "./b-exit-status-list";
+import { SavingLotsList } from "./saving-lots-list";
 
 export default async function WithdrawalsPage() {
   const t = await getTranslations("Withdrawals");
@@ -19,15 +21,18 @@ export default async function WithdrawalsPage() {
   const user = await requireSessionOrRedirect(new Date());
   const now = new Date();
 
-  const [walletA, walletB, walletC, profitA, freeC, investments, requests] = await Promise.all([
-    getWalletBalance(user.id, "A"),
-    getWalletBalance(user.id, "B"),
-    getWalletBalance(user.id, "C"),
-    withdrawableProfitA(user.id),
-    withdrawableC(user.id),
-    listInvestmentsForUser(user.id),
-    listWithdrawalRequestsForUser(user.id),
-  ]);
+  const [walletA, walletB, walletC, walletSaving, profitA, freeC, investments, requests, savingLots] =
+    await Promise.all([
+      getWalletBalance(user.id, "A"),
+      getWalletBalance(user.id, "B"),
+      getWalletBalance(user.id, "C"),
+      getWalletBalance(user.id, "SAVING"),
+      withdrawableProfitA(user.id),
+      withdrawableC(user.id),
+      listInvestmentsForUser(user.id),
+      listWithdrawalRequestsForUser(user.id),
+      listSavingLotsForUser(user.id),
+    ]);
 
   const friday = isFriday(now);
   const daysUntilFriday = daysUntilNextFriday(now);
@@ -52,6 +57,10 @@ export default async function WithdrawalsPage() {
           <div className="inline-flex items-baseline gap-2 rounded-lg bg-muted/60 px-4 py-2.5">
             <span className="text-sm text-muted-foreground">Wallet C</span>
             <span className="font-heading text-lg font-semibold tabular-nums">{toDisplay(walletC)}</span>
+          </div>
+          <div className="inline-flex items-baseline gap-2 rounded-lg bg-muted/60 px-4 py-2.5">
+            <span className="text-sm text-muted-foreground">SAVING</span>
+            <span className="font-heading text-lg font-semibold tabular-nums">{toDisplay(walletSaving)}</span>
           </div>
         </div>
       </div>
@@ -87,6 +96,25 @@ export default async function WithdrawalsPage() {
             now={now.toISOString()}
             isFriday={friday}
             daysUntilFriday={daysUntilFriday}
+            locale={locale}
+          />
+        </CardContent>
+      </Card>
+
+      <Card className="border-border/60">
+        <CardHeader>
+          <CardTitle className="text-base font-medium">{t("savingLotsHeading")}</CardTitle>
+          <CardDescription>{t("savingLotsDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SavingLotsList
+            lots={savingLots.map((lot) => ({
+              id: lot.id,
+              amount: toDisplay(lot.amount),
+              createdAt: lot.createdAt.toISOString(),
+              unlocksAt: lot.unlocksAt.toISOString(),
+              releasedAt: lot.releasedAt?.toISOString() ?? null,
+            }))}
             locale={locale}
           />
         </CardContent>

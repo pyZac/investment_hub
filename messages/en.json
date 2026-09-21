@@ -188,7 +188,7 @@
     "cancel": "Cancel",
 
     "transfersHeading": "Transfers to Wallet B",
-    "transfersDescription": "Self-service, instant, available on Fridays only.",
+    "transfersDescription": "Self-service, instant. Wallet A profit is available on Fridays only; Wallet C commission is available any day.",
     "transferATitle": "Wallet A profit",
     "transferCTitle": "Wallet C commission",
     "availableLabel": "Available to transfer",
@@ -217,6 +217,15 @@
     "releasingCapital": "Releasing…",
     "capitalReleaseSuccessTitle": "Capital released",
     "capitalReleaseSuccessDescription": "Your Wallet B balance has been updated.",
+
+    "savingLotsHeading": "SAVING lots",
+    "savingLotsDescription": "The locked portion of your Direct Commission, and when each part unlocks into Wallet C.",
+    "savingLotsEmptyState": "You have no SAVING lots yet.",
+    "savingLotStartDate": "Lock start",
+    "savingLotReleaseDate": "Release date",
+    "savingLotReleasedOn": "Released on",
+    "savingLotLocked": "Locked",
+    "savingLotReleased": "Released",
 
     "bExitHeading": "Wallet B exit",
     "bExitDescription": "Submit a request to withdraw funds out of the simulation. Requires admin approval.",

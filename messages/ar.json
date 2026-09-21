@@ -188,7 +188,7 @@
     "cancel": "إلغاء",
 
     "transfersHeading": "التحويلات إلى Wallet B",
-    "transfersDescription": "تحويل ذاتي وفوري، متاح أيام الجمعة فقط.",
+    "transfersDescription": "تحويل ذاتي وفوري. ربح Wallet A متاح أيام الجمعة فقط؛ عمولة Wallet C متاحة في أي يوم.",
     "transferATitle": "ربح Wallet A",
     "transferCTitle": "عمولة Wallet C",
     "availableLabel": "المتاح للتحويل",
@@ -217,6 +217,15 @@
     "releasingCapital": "جارٍ التحرير…",
     "capitalReleaseSuccessTitle": "تم تحرير رأس المال",
     "capitalReleaseSuccessDescription": "تم تحديث رصيدك في Wallet B.",
+
+    "savingLotsHeading": "دفعات SAVING",
+    "savingLotsDescription": "الجزء المقفل من عمولتك المباشرة (Direct Commission)، وموعد إطلاق كل جزء إلى Wallet C.",
+    "savingLotsEmptyState": "ليس لديك أي دفعات SAVING بعد.",
+    "savingLotStartDate": "بداية القفل",
+    "savingLotReleaseDate": "تاريخ الإطلاق",
+    "savingLotReleasedOn": "تم الإطلاق في",
+    "savingLotLocked": "مقفل",
+    "savingLotReleased": "تم الإطلاق",
 
     "bExitHeading": "سحب من Wallet B",
     "bExitDescription": "قدّم طلبًا لسحب أموال خارج المحاكاة. يتطلب موافقة الإدارة.",

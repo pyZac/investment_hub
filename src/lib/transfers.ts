@@ -26,8 +26,11 @@ async function transfer(
   forDate: Date,
   withdrawable: () => Promise<Prisma.Decimal>,
   comment: string,
+  requiresFriday: boolean,
 ) {
-  assertFriday(forDate);
+  if (requiresFriday) {
+    assertFriday(forDate);
+  }
 
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
   if (user.suspendedAt !== null) {
@@ -100,14 +103,16 @@ async function transfer(
  * Friday-only (Asia/Dubai), enforced server-side via `assertFriday`.
  */
 export async function transferAtoB(userId: string, amount: Prisma.Decimal.Value, forDate: Date) {
-  return transfer(userId, "A", amount, forDate, () => withdrawableProfitA(userId), "A→B profit withdrawal.");
+  return transfer(userId, "A", amount, forDate, () => withdrawableProfitA(userId), "A→B profit withdrawal.", true);
 }
 
 /**
  * Self-service, instant, no-approval transfer of commission out of Wallet C
- * into Wallet B. Withdrawable amount excludes anything still locked in
- * SAVING. Friday-only (Asia/Dubai), enforced server-side via `assertFriday`.
+ * into Wallet B. Available any day of the week — the Friday-only rule
+ * applies only to Wallet B exits (withdrawals out of the platform) and to
+ * the A->B profit transfer above, never to this one. withdrawableC now
+ * returns the full C balance (see withdrawable.ts's own fix comment).
  */
 export async function transferCtoB(userId: string, amount: Prisma.Decimal.Value, forDate: Date) {
-  return transfer(userId, "C", amount, forDate, () => withdrawableC(userId), "C→B commission withdrawal.");
+  return transfer(userId, "C", amount, forDate, () => withdrawableC(userId), "C→B commission withdrawal.", false);
 }

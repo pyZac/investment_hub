@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { registerAsRoot } from "./users";
-import { releaseDueSavingLots } from "./saving-lots";
+import { releaseDueSavingLots, listSavingLotsForUser } from "./saving-lots";
 import { cleanupLedgerEntriesForUsers } from "./test-helpers";
 
 const createdUserIds: string[] = [];
@@ -152,5 +152,78 @@ describe("releaseDueSavingLots", () => {
     const entries2 = await prisma.ledgerEntry.findMany({ where: { referenceType: "saving_lot", referenceId: lot2.id } });
     expect(entries1).toHaveLength(2);
     expect(entries2).toHaveLength(2);
+  });
+});
+
+describe("listSavingLotsForUser", () => {
+  it("returns a locked lot with its amount, lock start date, and release date", async () => {
+    const user = await makeUser();
+    const createdAt = new Date("2026-05-01T00:00:00.000Z");
+    const unlocksAt = new Date("2026-08-01T00:00:00.000Z");
+    const lot = await prisma.savingLot.create({
+      data: { userId: user.id, amount: "120", unlocksAt, createdAt },
+    });
+    createdLotIds.push(lot.id);
+
+    const lots = await listSavingLotsForUser(user.id);
+    const found = lots.find((l) => l.id === lot.id)!;
+
+    expect(found).toBeDefined();
+    expect(new Prisma.Decimal(found.amount).eq("120")).toBe(true);
+    expect(found.createdAt.toISOString()).toBe(createdAt.toISOString());
+    expect(found.unlocksAt.toISOString()).toBe(unlocksAt.toISOString());
+    expect(found.releasedAt).toBeNull();
+  });
+
+  it("shows a released lot's releasedAt, distinct from a still-locked one", async () => {
+    const user = await makeUser();
+    const releasedAt = new Date("2026-08-05T00:00:00.000Z");
+    const releasedLot = await prisma.savingLot.create({
+      data: {
+        userId: user.id,
+        amount: "50",
+        unlocksAt: new Date("2026-08-01T00:00:00.000Z"),
+        releasedAt,
+      },
+    });
+    createdLotIds.push(releasedLot.id);
+    const lockedLot = await prisma.savingLot.create({
+      data: { userId: user.id, amount: "80", unlocksAt: new Date("2026-12-01T00:00:00.000Z") },
+    });
+    createdLotIds.push(lockedLot.id);
+
+    const lots = await listSavingLotsForUser(user.id);
+
+    const foundReleased = lots.find((l) => l.id === releasedLot.id)!;
+    expect(foundReleased.releasedAt?.toISOString()).toBe(releasedAt.toISOString());
+
+    const foundLocked = lots.find((l) => l.id === lockedLot.id)!;
+    expect(foundLocked.releasedAt).toBeNull();
+  });
+
+  it("returns an empty array for a user with no saving lots", async () => {
+    const user = await makeUser();
+    const lots = await listSavingLotsForUser(user.id);
+    expect(lots).toEqual([]);
+  });
+
+  it("only returns the given user's own lots, newest first", async () => {
+    const user = await makeUser();
+    const other = await makeUser();
+    const otherLot = await prisma.savingLot.create({ data: { userId: other.id, amount: "999", unlocksAt: new Date("2026-08-01T00:00:00.000Z") } });
+    createdLotIds.push(otherLot.id);
+
+    const older = await prisma.savingLot.create({
+      data: { userId: user.id, amount: "10", unlocksAt: new Date("2026-08-01T00:00:00.000Z"), createdAt: new Date("2026-01-01T00:00:00.000Z") },
+    });
+    createdLotIds.push(older.id);
+    const newer = await prisma.savingLot.create({
+      data: { userId: user.id, amount: "20", unlocksAt: new Date("2026-08-01T00:00:00.000Z"), createdAt: new Date("2026-02-01T00:00:00.000Z") },
+    });
+    createdLotIds.push(newer.id);
+
+    const lots = await listSavingLotsForUser(user.id);
+    expect(lots.map((l) => l.id)).toEqual([newer.id, older.id]);
+    expect(lots.every((l) => l.userId === user.id)).toBe(true);
   });
 });

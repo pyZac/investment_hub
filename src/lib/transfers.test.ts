@@ -156,11 +156,15 @@ describe("transferCtoB", () => {
     expect(new Prisma.Decimal(walletB.balance).eq("300")).toBe(true);
   });
 
-  it("rejects on a non-Friday", async () => {
+  it("succeeds on a non-Friday — C→B has no Friday restriction (only Wallet B exits do)", async () => {
     const user = await makeUser();
     await fundWallet(user.id, "C", "300");
 
-    await expect(transferCtoB(user.id, "100", THURSDAY)).rejects.toThrow(NotFridayError);
+    const result = await transferCtoB(user.id, "300", THURSDAY);
+    expect(result.alreadyProcessed).toBe(false);
+
+    const walletC = await prisma.walletAccount.findUniqueOrThrow({ where: { userId_type: { userId: user.id, type: "C" } } });
+    expect(new Prisma.Decimal(walletC.balance).isZero()).toBe(true);
   });
 
   it("rejects an amount exceeding the Wallet C balance", async () => {
@@ -168,6 +172,23 @@ describe("transferCtoB", () => {
     await fundWallet(user.id, "C", "300");
 
     await expect(transferCtoB(user.id, "301", FRIDAY)).rejects.toThrow(InsufficientWithdrawableBalanceError);
+  });
+
+  it("does not reduce the available amount by the SAVING balance (regression guard for the withdrawableC fix)", async () => {
+    const user = await makeUser();
+    await fundWallet(user.id, "C", "50");
+    await postTransaction({
+      entries: [
+        { userId: user.id, wallet: "SAVING", direction: "CREDIT", amount: "30", entryType: "ADMIN_CREDIT", comment: "Test funding." },
+        { userId: null, wallet: "SYSTEM_EXTERNAL", direction: "DEBIT", amount: "30", entryType: "ADMIN_CREDIT", comment: "Test funding." },
+      ],
+      idempotencyKey: `test-fund:SAVING:${user.id}:${crypto.randomUUID()}`,
+    });
+
+    // Previously this would have thrown InsufficientWithdrawableBalanceError
+    // (available was wrongly capped at 50 - 30 = 20).
+    const result = await transferCtoB(user.id, "50", THURSDAY);
+    expect(result.alreadyProcessed).toBe(false);
   });
 });
 
