@@ -209,6 +209,33 @@ describe("searchTransferRecipients", () => {
     expect(byEmail.some((r) => r.id === target.id)).toBe(true);
   });
 
+  it("excludes ADMIN-role users, even when their name/email matches the query", async () => {
+    const searcher = await makeUser("Searcher Admin-Exclude");
+    const admin = await prisma.user.create({
+      data: {
+        email: `admin-exclude-${randomUUID()}@test.local`,
+        passwordHash: "x",
+        name: `AdminExclude-${randomUUID()}`,
+        role: "ADMIN",
+      },
+    });
+    createdUserIds.push(admin.id);
+
+    const results = await searchTransferRecipients(searcher.id, admin.name);
+    expect(results.find((r) => r.id === admin.id)).toBeUndefined();
+  });
+
+  it("excludes the real main admin account specifically", async () => {
+    const searcher = await makeUser("Searcher Main-Admin-Exclude");
+    const mainAdmin = await prisma.user.findFirstOrThrow({ where: { isMainAdmin: true } });
+
+    const results = await searchTransferRecipients(searcher.id, mainAdmin.name);
+    expect(results.find((r) => r.id === mainAdmin.id)).toBeUndefined();
+
+    const byEmail = await searchTransferRecipients(searcher.id, mainAdmin.email);
+    expect(byEmail.find((r) => r.id === mainAdmin.id)).toBeUndefined();
+  });
+
   it("returns an empty array for a blank query", async () => {
     const searcher = await makeUser("Searcher 3");
     const results = await searchTransferRecipients(searcher.id, "   ");

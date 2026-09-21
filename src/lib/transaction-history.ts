@@ -1,4 +1,4 @@
-import type { LedgerEntryType, Wallet } from "@prisma/client";
+import type { LedgerEntryType, Wallet, Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 
 /**
@@ -65,9 +65,47 @@ const INVESTMENT_REFERENCED_ENTRY_TYPES: ReadonlySet<LedgerEntryType> = new Set(
 ]);
 
 /**
+ * DIRECT_COMMISSION/DIRECT_SAVING are the only two entry types where the
+ * viewing user (the sponsor) isn't the investment's owner — the referenced
+ * investment belongs to the referred user whose purchase triggered the
+ * commission (direct-commission.ts: referenceId is always the investment
+ * id, investment.userId is the buyer, not the sponsor receiving this
+ * entry). DAILY_INTEREST/CAPITAL_RELEASE's referenced investment IS the
+ * viewing user's own, so naming its buyer would be naming themselves —
+ * no value added, left as the plain "{Label} — {PackageName}" format.
+ */
+const REFERRED_BUYER_ENTRY_TYPES: ReadonlySet<LedgerEntryType> = new Set(["DIRECT_COMMISSION", "DIRECT_SAVING"]);
+
+type InvestmentInfo = { packageName: string; buyerName: string };
+
+const TRANSFER_ENTRY_TYPES: ReadonlySet<LedgerEntryType> = new Set([
+  "USER_TRANSFER_SENT",
+  "USER_TRANSFER_RECEIVED",
+]);
+
+/**
+ * user-transfer.ts stamps `metadata: { counterpartyId, counterpartyName }`
+ * on both sides of a peer-to-peer transfer at write time specifically so a
+ * later display layer never needs a join to name the other party — read it
+ * back here rather than re-deriving anything. `metadata` is untyped JSON at
+ * the Prisma level, so this narrows defensively instead of trusting the
+ * shape blindly (a row written before this metadata field existed, or by
+ * some future different write path, could have anything in it).
+ */
+function counterpartyNameFromMetadata(metadata: Prisma.JsonValue | null): string | null {
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    const name = (metadata as Record<string, unknown>).counterpartyName;
+    if (typeof name === "string") {
+      return name;
+    }
+  }
+  return null;
+}
+
+/**
  * A human-readable description for one ledger row, replacing the raw
  * stored `comment` for entry types known to embed an id the user can't
- * make sense of. `packageNameByInvestmentId` is pre-fetched once per page
+ * make sense of. `investmentInfoById` is pre-fetched once per page
  * (batched, not N+1) by the caller. Entry types with no natural
  * human-readable substitute (SAVING_UNLOCK's lot id, WITHDRAWAL_OUT's
  * request id) just drop the raw id rather than inventing one — the row's
@@ -76,12 +114,26 @@ const INVESTMENT_REFERENCED_ENTRY_TYPES: ReadonlySet<LedgerEntryType> = new Set(
 function buildDescription(
   entryType: LedgerEntryType,
   referenceId: string | null,
-  packageNameByInvestmentId: Map<string, string>,
+  metadata: Prisma.JsonValue | null,
+  investmentInfoById: Map<string, InvestmentInfo>,
 ): string {
+  if (TRANSFER_ENTRY_TYPES.has(entryType)) {
+    const counterpartyName = counterpartyNameFromMetadata(metadata);
+    if (counterpartyName) {
+      return entryType === "USER_TRANSFER_SENT"
+        ? `Transfer sent to ${counterpartyName}`
+        : `Transfer received from ${counterpartyName}`;
+    }
+    return ENTRY_TYPE_LABELS[entryType];
+  }
+
   if (INVESTMENT_REFERENCED_ENTRY_TYPES.has(entryType)) {
-    const packageName = referenceId ? packageNameByInvestmentId.get(referenceId) : undefined;
-    if (packageName) {
-      return `${ENTRY_TYPE_LABELS[entryType]} — ${packageName}`;
+    const info = referenceId ? investmentInfoById.get(referenceId) : undefined;
+    if (info) {
+      if (REFERRED_BUYER_ENTRY_TYPES.has(entryType)) {
+        return `${ENTRY_TYPE_LABELS[entryType]} from ${info.buyerName}'s investment — ${info.packageName}`;
+      }
+      return `${ENTRY_TYPE_LABELS[entryType]} — ${info.packageName}`;
     }
   }
   return ENTRY_TYPE_LABELS[entryType];
@@ -144,10 +196,12 @@ export async function listLedgerEntriesForUser(
     investmentIds.length > 0
       ? await prisma.investment.findMany({
           where: { id: { in: investmentIds } },
-          select: { id: true, package: { select: { name: true } } },
+          select: { id: true, package: { select: { name: true } }, user: { select: { name: true } } },
         })
       : [];
-  const packageNameByInvestmentId = new Map(investments.map((inv) => [inv.id, inv.package.name]));
+  const investmentInfoById = new Map<string, InvestmentInfo>(
+    investments.map((inv) => [inv.id, { packageName: inv.package.name, buyerName: inv.user.name }]),
+  );
 
   return {
     entries: rows.map((row) => ({
@@ -157,7 +211,7 @@ export async function listLedgerEntriesForUser(
       amount: row.amount.toString(),
       entryType: row.entryType,
       comment: row.comment,
-      description: buildDescription(row.entryType, row.referenceId, packageNameByInvestmentId),
+      description: buildDescription(row.entryType, row.referenceId, row.metadata, investmentInfoById),
       createdAt: row.createdAt,
     })),
     total,

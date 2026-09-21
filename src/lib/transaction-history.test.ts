@@ -44,7 +44,7 @@ async function makeUser(label: string) {
  */
 async function creditEntry(
   userId: string,
-  wallet: "A" | "B" | "C",
+  wallet: "A" | "B" | "C" | "SAVING",
   entryType: Parameters<typeof postTransaction>[0]["entries"][0]["entryType"],
   amount: string,
   createdAt: Date,
@@ -193,21 +193,40 @@ describe("listLedgerEntriesForUser — description (no raw ids exposed to the us
     return investment;
   }
 
-  it("DIRECT_COMMISSION description includes the package name, not the raw investment id", async () => {
-    const user = await makeUser("desc-direct-commission");
-    const investment = await makeInvestment(user.id, `Description-Test-Package-${crypto.randomUUID()}`);
-    await creditEntry(user.id, "C", "DIRECT_COMMISSION", "50", new Date(), {
+  it("DIRECT_COMMISSION description names the referred buyer (not the sponsor viewing it) and the package, not the raw investment id", async () => {
+    const sponsor = await makeUser("desc-direct-commission-sponsor");
+    const buyer = await makeUser("desc-direct-commission-buyer");
+    const investment = await makeInvestment(buyer.id, `Description-Test-Package-${crypto.randomUUID()}`);
+    // The commission entry itself is credited to the SPONSOR's wallet, but
+    // referenceId points at the BUYER's investment — exactly the real
+    // direct-commission.ts shape (referenceId is always the investment id).
+    await creditEntry(sponsor.id, "C", "DIRECT_COMMISSION", "50", new Date(), {
       referenceType: "investment",
       referenceId: investment.id,
     });
 
-    const page = await listLedgerEntriesForUser(user.id, {}, 1);
+    const page = await listLedgerEntriesForUser(sponsor.id, {}, 1);
     const entry = page.entries.find((e) => e.entryType === "DIRECT_COMMISSION")!;
 
-    expect(entry.description).toContain("Direct Commission");
     const pkg = await prisma.package.findUniqueOrThrow({ where: { id: investment.packageId } });
-    expect(entry.description).toContain(pkg.name);
+    expect(entry.description).toBe(`Direct Commission from ${buyer.name}'s investment — ${pkg.name}`);
     expect(entry.description).not.toContain(investment.id);
+  });
+
+  it("DIRECT_SAVING description also names the referred buyer, with its own entry-type label as the prefix", async () => {
+    const sponsor = await makeUser("desc-direct-saving-sponsor");
+    const buyer = await makeUser("desc-direct-saving-buyer");
+    const investment = await makeInvestment(buyer.id, `Description-Test-Package-${crypto.randomUUID()}`);
+    await creditEntry(sponsor.id, "SAVING", "DIRECT_SAVING", "30", new Date(), {
+      referenceType: "investment",
+      referenceId: investment.id,
+    });
+
+    const page = await listLedgerEntriesForUser(sponsor.id, {}, 1);
+    const entry = page.entries.find((e) => e.entryType === "DIRECT_SAVING")!;
+
+    const pkg = await prisma.package.findUniqueOrThrow({ where: { id: investment.packageId } });
+    expect(entry.description).toBe(`Direct Commission (Saved) from ${buyer.name}'s investment — ${pkg.name}`);
   });
 
   it("CAPITAL_RELEASE and DAILY_INTEREST descriptions also include the package name, not the raw id", async () => {
@@ -274,6 +293,76 @@ describe("listLedgerEntriesForUser — description (no raw ids exposed to the us
     const dailyInterestEntries = page.entries.filter((e) => e.entryType === "DAILY_INTEREST");
     expect(dailyInterestEntries.length).toBeGreaterThanOrEqual(3);
     expect(dailyInterestEntries.every((e) => e.description.includes(pkg.name))).toBe(true);
+  });
+});
+
+describe("listLedgerEntriesForUser — transfer descriptions (counterparty name from metadata)", () => {
+  async function transferEntry(
+    userId: string,
+    entryType: "USER_TRANSFER_SENT" | "USER_TRANSFER_RECEIVED",
+    counterpartyId: string,
+    counterpartyName: string,
+    createdAt: Date,
+  ) {
+    const key = `txhistory-transfer:${userId}:${crypto.randomUUID()}`;
+    await prisma.ledgerEntry.create({
+      data: {
+        userId,
+        wallet: "B",
+        direction: entryType === "USER_TRANSFER_SENT" ? "DEBIT" : "CREDIT",
+        amount: "50",
+        entryType,
+        comment: "test transfer",
+        idempotencyKey: key,
+        createdAt,
+        referenceType: "user_transfer",
+        referenceId: counterpartyId,
+        metadata: { counterpartyId, counterpartyName },
+      },
+    });
+  }
+
+  it("USER_TRANSFER_SENT shows the recipient's real name from metadata, not the generic label", async () => {
+    const sender = await makeUser("desc-transfer-sender");
+    const recipient = await makeUser("desc-transfer-recipient");
+    await transferEntry(sender.id, "USER_TRANSFER_SENT", recipient.id, recipient.name, new Date());
+
+    const page = await listLedgerEntriesForUser(sender.id, {}, 1);
+    const entry = page.entries.find((e) => e.entryType === "USER_TRANSFER_SENT")!;
+    expect(entry.description).toBe(`Transfer sent to ${recipient.name}`);
+  });
+
+  it("USER_TRANSFER_RECEIVED shows the sender's real name from metadata", async () => {
+    const sender = await makeUser("desc-transfer-sender-2");
+    const recipient = await makeUser("desc-transfer-recipient-2");
+    await transferEntry(recipient.id, "USER_TRANSFER_RECEIVED", sender.id, sender.name, new Date());
+
+    const page = await listLedgerEntriesForUser(recipient.id, {}, 1);
+    const entry = page.entries.find((e) => e.entryType === "USER_TRANSFER_RECEIVED")!;
+    expect(entry.description).toBe(`Transfer received from ${sender.name}`);
+  });
+
+  it("falls back to the generic label when metadata is missing or malformed", async () => {
+    const user = await makeUser("desc-transfer-no-metadata");
+    const key = `txhistory-transfer-nometa:${user.id}:${crypto.randomUUID()}`;
+    await prisma.ledgerEntry.create({
+      data: {
+        userId: user.id,
+        wallet: "B",
+        direction: "DEBIT",
+        amount: "50",
+        entryType: "USER_TRANSFER_SENT",
+        comment: "test transfer",
+        idempotencyKey: key,
+        createdAt: new Date(),
+        referenceType: "user_transfer",
+        referenceId: "some-id",
+      },
+    });
+
+    const page = await listLedgerEntriesForUser(user.id, {}, 1);
+    const entry = page.entries.find((e) => e.entryType === "USER_TRANSFER_SENT")!;
+    expect(entry.description).toBe("Transfer Sent");
   });
 });
 

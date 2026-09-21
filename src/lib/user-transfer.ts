@@ -122,10 +122,12 @@ const MAX_RECIPIENT_RESULTS = 10;
  * Recipient search for the transfer picker. Unlike user-management.ts's
  * searchUsers (admin-gated, used for admin-panel target selection), this is
  * self-service — any authenticated user may search by name/email to find a
- * transfer recipient. Excludes the searching user themselves and suspended
+ * transfer recipient. Excludes the searching user themselves, suspended
  * accounts (both would fail transferBetweenUsers anyway; filtering here
  * keeps them out of the picker instead of surfacing a pickable-but-rejected
- * option).
+ * option), and every ADMIN-role account (including the main admin) — a
+ * regular user should never see or be able to send a peer-to-peer transfer
+ * to an admin account through this picker.
  */
 export async function searchTransferRecipients(searchingUserId: string, query: string) {
   const trimmed = query.trim();
@@ -137,6 +139,7 @@ export async function searchTransferRecipients(searchingUserId: string, query: s
     where: {
       id: { not: searchingUserId },
       suspendedAt: null,
+      role: { not: "ADMIN" },
       OR: [
         { name: { contains: trimmed, mode: "insensitive" } },
         { email: { contains: trimmed, mode: "insensitive" } },
