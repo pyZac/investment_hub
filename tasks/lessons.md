@@ -1654,3 +1654,68 @@ along; only became visible/flagged now because this session's Ranking
 page reuses the same component on a second page. One-line fix: added
 `dir="ltr"` to that span, matching this project's established
 tabular-nums-and-numeric-ranges-stay-LTR convention used elsewhere.
+
+## 2026-09-22 — post-phase (production bug on /admin/credits)
+Mistake: the currency-formatting commit (0f0a264) added
+`toDisplayWithCurrency(amount)` directly on live `useState("")` form-input
+state inside 4 confirmation-dialog previews (credit-form.tsx, transfer
+-form.tsx x2, transfer-panel.tsx, b-exit-form.tsx) — a plain JSX expression,
+which React evaluates on every render of the component regardless of
+whether the surrounding Dialog is actually open. The moment the guard
+wrapping that JSX became truthy (e.g. `{!success && user && (...)}` right
+after a recipient/user is picked, before any amount is typed), it called
+`new Prisma.Decimal("")`, which throws `[DecimalError] Invalid argument: `
+— the empty-string case, not a formatted "$1,000.00" string leaking into
+the constructor as first suspected (confirmed by reproducing both in
+isolation: an empty string and a "$"-prefixed string throw the *identical*
+message shape, `Invalid argument: ` vs `Invalid argument: $1,000.00` — the
+production log's trailing bare colon with nothing after it was the tell
+that it was the empty-string case, not a leaked formatted string).
+Rule: `toDisplay`/`toDisplayWithCurrency` must only ever be called on a
+real Decimal value (server data, a committed form value after validation)
+— never directly on a `useState` string still bound to a live, possibly
+-empty/partial `<input>`, even inside a JSX block gated by a "should be
+showing" condition. A gating condition on *whether a summary section
+renders* is not the same as a guarantee that the *value inside it* is
+valid — those are two different invariants and conflating them was the
+root cause here. Added `toDisplayAmountPreview(rawInput: string)` in
+display.ts specifically for this "live input echoed back for preview"
+case — returns `$0.00` for empty/invalid input instead of throwing — and
+migrated exactly the 4 call sites doing this (not the dozens of other
+`toDisplayWithCurrency` call sites, which all receive real server-sourced
+Decimal strings and correctly stay strict per invariant #1). When
+auditing a "format live form state for preview" pattern in the future,
+check what the input state's *initial* value is (usually `""`), not just
+its value once the user has typed something — a crash that only appears
+after some other field/selection becomes truthy is a strong signal the
+real trigger is an unvalidated empty/default value reaching a strict
+parser, not the value that was most recently typed.
+
+Separately (unrelated to the above, found while running the full suite as
+final verification): `reconciliation.test.ts` failed with a real $27.34
+whole-DB drift, caused by a single leftover test user
+(`rankpayoutjob-fail-a-*@test.local`) from an interrupted daily-interest
+-job test run — it had a correctly-paired, balanced ledger entry
+(Wallet A CREDIT / SYSTEM_EXTERNAL DEBIT) and an adminAction row, but no
+`WalletAccount` row at all, so `totalUserBalances` (summed from
+WalletAccount rows) silently excluded that user's money while
+`systemExternalLedgerNet` still counted it. Confirmed via: no orphaned
+SYSTEM_EXTERNAL rows, no unbalanced idempotency keys, no wallet-cache-vs
+-ledger mismatches — only found by cross-checking every non-SYSTEM_EXTERNAL
+ledger row against `WalletAccount` rows for a missing (userId, wallet)
+pair. Repaired using the project's own `cleanupLedgerEntriesForUsers`
+helper (which disables/re-enables the `ledger_entries_no_delete` trigger
+internally — a raw `deleteMany` on ledger_entries is correctly blocked by
+that trigger otherwise, invariant #2) plus a manual delete of the
+orphaned adminAction and user rows, confirmed with the user before
+deleting anything from the shared dev DB. Re-verified via
+`runReconciliation()` clean, not a manual balance check.
+Rule: confirmed via this occurrence — not a new rule, a reminder that the
+existing "run the full suite, not just your own new/changed tests, before
+declaring done" rule (see multiple entries above) caught a completely
+unrelated pre-existing DB-state bug this session's diff had zero relation
+to. A diff touching only display/JSX files can still surface in a failing
+full-suite run for reasons having nothing to do with the diff — investigate
+before assuming "must be related to what I just changed" or "must be
+flaky," and before assuming it's safe to ignore as unrelated without
+tracing the actual mechanism.
