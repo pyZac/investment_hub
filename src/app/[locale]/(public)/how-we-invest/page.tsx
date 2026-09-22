@@ -1,4 +1,5 @@
 import { getTranslations } from "next-intl/server";
+import Image from "next/image";
 import { Search, Target, LineChart, ShieldAlert, Layers } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { PublicHero } from "@/components/public/public-hero";
@@ -32,15 +33,30 @@ export default async function HowWeInvestPage() {
   return (
     <div>
       <PublicHero
-        imageSrc="/images/investment_1.jpg"
+        imageSrc="/images/city skylines_2.jpg"
         imageAlt={t("heroHeadline")}
         headline={t("heroHeadline")}
         subheadline={t("heroSubheadline")}
       />
 
       <div className="mx-auto max-w-6xl space-y-16 px-6 py-16 lg:px-8">
+        <section className="grid grid-cols-1 items-center gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="space-y-6">
+            <h2 className="font-heading text-2xl font-semibold tracking-tight sm:text-3xl">{t("processHeading")}</h2>
+          </div>
+          <div className="relative h-64 w-full overflow-hidden rounded-2xl ring-1 ring-border/60 lg:h-80">
+            <Image
+              src="/images/investment_1.jpg"
+              alt={t("processHeading")}
+              fill
+              sizes="(min-width: 1024px) 320px, 100vw"
+              className="object-cover"
+              style={{ objectPosition: "center 30%" }}
+            />
+          </div>
+        </section>
+
         <section className="space-y-6">
-          <h2 className="font-heading text-2xl font-semibold tracking-tight sm:text-3xl">{t("processHeading")}</h2>
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {steps.map(({ number, icon: Icon, titleKey, bodyKey }) => (
               <Card key={titleKey} className="border-border/60 shadow-sm transition-shadow hover:shadow-md">

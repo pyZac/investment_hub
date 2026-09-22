@@ -11,12 +11,18 @@ import type { ReactNode } from "react";
 export function PublicHero({
   imageSrc,
   imageAlt,
+  imagePosition = "center",
   headline,
   subheadline,
   cta,
 }: {
   imageSrc: string;
   imageAlt: string;
+  /** CSS `object-position` for the hero photo — tune per-image when the
+   * subject isn't centered (e.g. a portrait photo whose subject sits in
+   * the upper half). Defaults to "center", which suits any landscape
+   * photo with no strong off-center subject. */
+  imagePosition?: string;
   headline: string;
   subheadline?: string;
   cta?: ReactNode;
@@ -30,6 +36,7 @@ export function PublicHero({
         priority
         sizes="100vw"
         className="object-cover"
+        style={{ objectPosition: imagePosition }}
       />
       <div className="absolute inset-0 bg-gradient-to-t from-background via-background/60 to-background/10" />
       <div className="relative mx-auto w-full max-w-6xl space-y-4 px-6 pb-14 lg:px-8">
