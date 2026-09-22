@@ -1,11 +1,27 @@
 import { getTranslations, getLocale } from "next-intl/server";
 import { requireMarketerOrRedirect } from "@/lib/page-guard";
 import { getMySubtree } from "@/lib/binary-tree";
-import { getMyLatestBinaryCycle, daysUntilNextSaturday, type QualificationFailureReason } from "@/lib/binary-cycle";
+import {
+  getMyLatestBinaryCycle,
+  getMyCurrentLegVolumes,
+  daysUntilNextSaturday,
+  type QualificationFailureReason,
+} from "@/lib/binary-cycle";
 import { toDisplay } from "@/lib/display";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { BinaryTreeView } from "./binary-tree-view";
+import { BinaryTreeView, type ClientSubtreeNode } from "./binary-tree-view";
 import { BinaryPanel } from "./binary-panel";
+import type { SubtreeNode } from "@/lib/binary-tree";
+
+function toClientSubtreeNode(node: SubtreeNode): ClientSubtreeNode {
+  return {
+    userId: node.userId,
+    name: node.name,
+    position: node.position,
+    personalBv: toDisplay(node.personalBv),
+    children: node.children.map(toClientSubtreeNode),
+  };
+}
 
 const MAX_DEPTH = 5;
 
@@ -15,9 +31,10 @@ export default async function BinaryTreePage() {
   const now = new Date();
   const user = await requireMarketerOrRedirect(now);
 
-  const [subtree, latestCycle] = await Promise.all([
+  const [subtree, latestCycle, currentLegVolumes] = await Promise.all([
     getMySubtree(user.id, MAX_DEPTH),
     getMyLatestBinaryCycle(user.id),
+    getMyCurrentLegVolumes(user.id, now),
   ]);
 
   const daysUntilClose = daysUntilNextSaturday(now);
@@ -58,6 +75,12 @@ export default async function BinaryTreePage() {
                 : null
             }
             daysUntilClose={daysUntilClose}
+            currentLegVolumes={{
+              leftVolume: toDisplay(currentLegVolumes.leftVolume),
+              rightVolume: toDisplay(currentLegVolumes.rightVolume),
+              weakLeg: currentLegVolumes.weakLeg,
+              estimatedCommission: toDisplay(currentLegVolumes.estimatedCommission),
+            }}
           />
         </CardContent>
       </Card>
@@ -67,7 +90,7 @@ export default async function BinaryTreePage() {
           <h2 className="font-heading text-xl font-semibold">{t("treeHeading")}</h2>
           <p className="text-sm text-muted-foreground">{t("treeDescription")}</p>
         </div>
-        <BinaryTreeView subtree={subtree} locale={locale} />
+        <BinaryTreeView subtree={subtree ? toClientSubtreeNode(subtree) : null} locale={locale} />
       </div>
     </div>
   );

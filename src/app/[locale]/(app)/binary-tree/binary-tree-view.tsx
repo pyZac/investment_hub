@@ -5,10 +5,27 @@ import Tree, { type CustomNodeElementProps, type RawNodeDatum } from "react-d3-t
 import { useTranslations } from "next-intl";
 import { Network } from "lucide-react";
 import { Card } from "@/components/ui/card";
-import type { SubtreeNode } from "@/lib/binary-tree";
+import { toDisplayWithCurrency } from "@/lib/display";
+
+/**
+ * Client-facing mirror of `SubtreeNode` (@/lib/binary-tree) with
+ * `personalBv` already converted to a display-ready Decimal string at the
+ * server/client boundary — a `Prisma.Decimal` never crosses into a "use
+ * client" component, same convention as every other server->client money
+ * value in this app (page.tsx converts via `toDisplay`/`toDisplayWithCurrency`
+ * before handing props to a client component).
+ */
+export type ClientSubtreeNode = {
+  userId: string;
+  name: string;
+  position: "LEFT" | "RIGHT" | null;
+  personalBv: string;
+  children: ClientSubtreeNode[];
+};
 
 type NodeAttributes = {
   position: "LEFT" | "RIGHT" | "ROOT";
+  personalBv: string;
 };
 
 // react-d3-tree renders into raw SVG presentation attributes, which do not
@@ -30,16 +47,20 @@ const TREE_BRAND_FOREGROUND = "#06201f";
  * from the source data — never inferred from array order, recursion order,
  * or anything about how react-d3-tree lays the node out visually.
  */
-function toRawNodeDatum(node: SubtreeNode, isRoot: boolean): RawNodeDatum {
+function toRawNodeDatum(node: ClientSubtreeNode, isRoot: boolean): RawNodeDatum {
   return {
     name: node.name,
-    attributes: { position: isRoot ? "ROOT" : (node.position ?? "ROOT") } satisfies NodeAttributes,
+    attributes: {
+      position: isRoot ? "ROOT" : (node.position ?? "ROOT"),
+      personalBv: node.personalBv,
+    } satisfies NodeAttributes,
     children: node.children.map((child) => toRawNodeDatum(child, false)),
   };
 }
 
 function CustomNode({ nodeDatum, mirrored }: CustomNodeElementProps & { mirrored: boolean }) {
   const position = (nodeDatum.attributes?.position as NodeAttributes["position"] | undefined) ?? "ROOT";
+  const personalBv = (nodeDatum.attributes?.personalBv as NodeAttributes["personalBv"] | undefined) ?? "0";
 
   const badgeColor = position === "LEFT" ? TREE_BRAND : position === "RIGHT" ? TREE_ACCENT : TREE_MUTED_FOREGROUND;
   // RIGHT's chart-5 accent is a light blue, readable with dark text like
@@ -58,7 +79,7 @@ function CustomNode({ nodeDatum, mirrored }: CustomNodeElementProps & { mirrored
           whole SVG container is mirrored for RTL — this is a pixel-level
           correction only, the underlying `position` value above is untouched. */}
       <g transform={mirrored ? "scale(-1, 1)" : undefined}>
-        <foreignObject x={-70} y={16} width={140} height={54}>
+        <foreignObject x={-70} y={16} width={140} height={70}>
           <div className="flex flex-col items-center gap-1 text-center" style={{ direction: "ltr" }}>
             <span
               className="truncate font-heading text-xs font-medium"
@@ -74,6 +95,9 @@ function CustomNode({ nodeDatum, mirrored }: CustomNodeElementProps & { mirrored
                 {position}
               </span>
             )}
+            <span className="text-[10px]" style={{ color: TREE_MUTED_FOREGROUND }}>
+              BV: {toDisplayWithCurrency(personalBv)}
+            </span>
           </div>
         </foreignObject>
       </g>
@@ -81,7 +105,7 @@ function CustomNode({ nodeDatum, mirrored }: CustomNodeElementProps & { mirrored
   );
 }
 
-export function BinaryTreeView({ subtree, locale }: { subtree: SubtreeNode | null; locale: string }) {
+export function BinaryTreeView({ subtree, locale }: { subtree: ClientSubtreeNode | null; locale: string }) {
   const t = useTranslations("BinaryTree");
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });

@@ -114,7 +114,7 @@ function addMonths(date: Date, months: number): Date {
  * would silently re-price every past week's binary commission whenever the
  * rate changes.
  */
-async function activeCommissionConfigAt(forDate: Date, tx: Prisma.TransactionClient) {
+export async function activeCommissionConfigAt(forDate: Date, tx: Prisma.TransactionClient | typeof prisma = prisma) {
   const activeConfig = await tx.commissionConfig.findFirst({
     where: {
       effectiveFrom: { lte: forDate },
@@ -351,6 +351,75 @@ export async function getMyLatestBinaryCycle(userId: string) {
     where: { userId },
     orderBy: { weekStart: "desc" },
   });
+}
+
+export type CurrentLegVolumes = {
+  leftVolume: Prisma.Decimal;
+  rightVolume: Prisma.Decimal;
+  weakLeg: BinaryPosition;
+  estimatedCommission: Prisma.Decimal;
+};
+
+/**
+ * The logged-in user's LEFT/RIGHT volume for the *current, still-open*
+ * weekly cycle (surviving carry-in from the last closed cycle + this week's
+ * BV so far), plus what their Binary Commission would be if the cycle
+ * closed right now. Purely a read-only preview for the UI (no write, no
+ * `binary_cycles` row, no ledger entry) — the real payout is only ever
+ * decided by `closeBinaryCycleForUser` at the actual Saturday close, which
+ * additionally checks qualification (suspension, active investment, leg
+ * activity). This estimate deliberately ignores qualification and always
+ * shows the raw matched-volume commission, since the UI's purpose is
+ * "here's what's accumulating," not a qualification determination.
+ *
+ * Mirrors `closeBinaryCycleForUser`'s left/right/matched math exactly
+ * (`applyExpiry` for carry-in, `bvEntry.groupBy` for this week's BV,
+ * `activeCommissionConfigAt` for the rate) so this preview can never
+ * silently disagree with what the real close would compute for the same
+ * moment. No target-user param — ownership enforced by construction
+ * (invariant #9): only ever call this with the session's own userId.
+ * `now` is an explicit parameter (invariant #4).
+ */
+export async function getMyCurrentLegVolumes(userId: string, now: Date): Promise<CurrentLegVolumes> {
+  const currentWeekStart = saturdayWeekStart(now);
+  const priorWeekStart = new Date(currentWeekStart.getTime() - 7 * MS_PER_DAY);
+
+  const [priorCycle, activeConfig, bvByLeg] = await Promise.all([
+    prisma.binaryCycle.findUnique({ where: { userId_weekStart: { userId, weekStart: priorWeekStart } } }),
+    activeCommissionConfigAt(now),
+    prisma.bvEntry.groupBy({
+      by: ["leg"],
+      where: { ancestorUserId: userId, cycleWeekStart: currentWeekStart },
+      _sum: { amount: true },
+    }),
+  ]);
+
+  const carryLeftIn = priorCycle ? new Prisma.Decimal(priorCycle.carryLeft) : new Prisma.Decimal(0);
+  const carryRightIn = priorCycle ? new Prisma.Decimal(priorCycle.carryRight) : new Prisma.Decimal(0);
+  const survivingCarryLeft = applyExpiry(
+    carryLeftIn,
+    priorCycle?.carryLeftSince ?? null,
+    currentWeekStart,
+    activeConfig.binaryCarryForwardExpiryMonths,
+  );
+  const survivingCarryRight = applyExpiry(
+    carryRightIn,
+    priorCycle?.carryRightSince ?? null,
+    currentWeekStart,
+    activeConfig.binaryCarryForwardExpiryMonths,
+  );
+
+  const thisWeekLeft = bvByLeg.find((b) => b.leg === "LEFT")?._sum.amount ?? new Prisma.Decimal(0);
+  const thisWeekRight = bvByLeg.find((b) => b.leg === "RIGHT")?._sum.amount ?? new Prisma.Decimal(0);
+
+  const leftVolume = survivingCarryLeft.add(thisWeekLeft);
+  const rightVolume = survivingCarryRight.add(thisWeekRight);
+
+  const weakLeg: BinaryPosition = leftVolume.lte(rightVolume) ? "LEFT" : "RIGHT";
+  const matched = Prisma.Decimal.min(leftVolume, rightVolume);
+  const estimatedCommission = matched.mul(activeConfig.binaryRate).div(100);
+
+  return { leftVolume, rightVolume, weakLeg, estimatedCommission };
 }
 
 /**

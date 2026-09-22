@@ -1,9 +1,15 @@
 import { afterAll, describe, expect, it } from "vitest";
+import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { registerAsRoot, registerWithSponsor } from "./users";
+import { purchasePackage } from "./investments";
+import { adminCreditWalletB } from "./admin-credit";
 import { getMySubtree } from "./binary-tree";
+import { cleanupLedgerEntriesForUsers } from "./test-helpers";
 
 const createdUserIds: string[] = [];
+const createdPackageIds: string[] = [];
+const createdInvestmentIds: string[] = [];
 
 const sampleQuestions = [
   { question: "First pet's name?", answer: "Fluffy" },
@@ -12,6 +18,12 @@ const sampleQuestions = [
 ];
 
 afterAll(async () => {
+  await prisma.mrvPeriod.deleteMany({ where: { userId: { in: createdUserIds } } });
+  await prisma.savingLot.deleteMany({ where: { userId: { in: createdUserIds } } });
+  await prisma.bvEntry.deleteMany({ where: { ancestorUserId: { in: createdUserIds } } });
+  await prisma.investment.deleteMany({ where: { id: { in: createdInvestmentIds } } });
+  await cleanupLedgerEntriesForUsers(createdUserIds);
+  await prisma.package.deleteMany({ where: { id: { in: createdPackageIds } } });
   await prisma.binaryNode.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.securityQuestion.deleteMany({ where: { userId: { in: createdUserIds } } });
   await prisma.walletAccount.deleteMany({ where: { userId: { in: createdUserIds } } });
@@ -39,6 +51,36 @@ async function makeReferral(sponsorId: string, label: string) {
   });
   createdUserIds.push(user.id);
   return user;
+}
+
+async function makeAndFundPackage(amount: string) {
+  const pkg = await prisma.package.create({
+    data: { name: `SubtreeBvTest-${crypto.randomUUID()}`, amount, isActive: true },
+  });
+  createdPackageIds.push(pkg.id);
+  return pkg;
+}
+
+async function fundWalletB(userId: string, amount: string) {
+  const mainAdmin = await prisma.user.findFirstOrThrow({ where: { isMainAdmin: true } });
+  await adminCreditWalletB(mainAdmin.id, {
+    userId,
+    amount,
+    reason: "Test funding for subtree personal BV.",
+    idempotencyKey: `subtree-bv-fund:${userId}:${crypto.randomUUID()}`,
+  });
+}
+
+async function buyPackage(userId: string, amount: string) {
+  await fundWalletB(userId, amount);
+  const pkg = await makeAndFundPackage(amount);
+  const result = await purchasePackage(userId, {
+    packageId: pkg.id,
+    forDate: new Date("2026-08-24T10:00:00.000Z"), // a Monday
+    idempotencyKey: `subtree-bv-purchase:${userId}:${crypto.randomUUID()}`,
+  });
+  createdInvestmentIds.push(result.investment.id);
+  return result;
 }
 
 describe("getMySubtree", () => {
@@ -123,5 +165,33 @@ describe("getMySubtree", () => {
     }
     const idsInA = collectIds(subtreeA!);
     expect(idsInA).not.toContain(sponsorB.id);
+  });
+
+  it("reports each node's own personal BV (sum of their own investments), zero for a node with no purchases", async () => {
+    const root = await makeRoot("bv-root");
+    const left = await makeReferral(root.id, "bv-left"); // root's LEFT
+    const right = await makeReferral(root.id, "bv-right"); // root's RIGHT, never purchases
+
+    await buyPackage(root.id, "1000");
+    await buyPackage(left.id, "2500");
+
+    const subtree = await getMySubtree(root.id, 5);
+
+    expect(new Prisma.Decimal(subtree!.personalBv).eq("1000")).toBe(true);
+    const leftNode = subtree!.children.find((c) => c.userId === left.id)!;
+    const rightNode = subtree!.children.find((c) => c.userId === right.id)!;
+    expect(new Prisma.Decimal(leftNode.personalBv).eq("2500")).toBe(true);
+    expect(new Prisma.Decimal(rightNode.personalBv).eq("0")).toBe(true);
+  });
+
+  it("sums MULTIPLE purchases by the same node into one personalBv total", async () => {
+    const root = await makeRoot("bv-multi-root");
+    await makeReferral(root.id, "bv-multi-referral"); // gives root its own lazy binary_nodes row
+    await buyPackage(root.id, "500");
+    await buyPackage(root.id, "750");
+
+    const subtree = await getMySubtree(root.id, 5);
+
+    expect(new Prisma.Decimal(subtree!.personalBv).eq("1250")).toBe(true);
   });
 });

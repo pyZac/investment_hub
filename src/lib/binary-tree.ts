@@ -1,4 +1,4 @@
-import type { BinaryPosition, Prisma } from "@prisma/client";
+import { Prisma, type BinaryPosition } from "@prisma/client";
 import { prisma } from "./prisma";
 import { saturdayWeekStart } from "./binary-cycle";
 
@@ -250,6 +250,14 @@ export type SubtreeNode = {
   userId: string;
   name: string;
   position: BinaryPosition | null;
+  /**
+   * This node's own personal BV — the sum of their own `Investment.amount`
+   * rows (new + reinvestment package purchases), i.e. exactly the amount
+   * `rollupBvForPurchase` rolls up to their ancestors (mlm_rules_log.md
+   * Section 5's BV definition). NOT `binary_nodes.leftBv`/`rightBv`, which
+   * are this node's own subtree leg totals, not their personal contribution.
+   */
+  personalBv: Prisma.Decimal;
   children: SubtreeNode[];
 };
 
@@ -289,7 +297,10 @@ export async function getMySubtree(userId: string, maxDepth: number): Promise<Su
   // single deep Prisma `include` chain (which would need maxDepth levels of
   // nested `include` written out) or an unbounded recursive query.
   const nodesByParent = new Map<string, SubtreeNode[]>();
+  const allUserIds = [userId];
   let currentLevelParentIds = [userId];
+
+  const rawNodesById = new Map<string, { userId: string; name: string; position: BinaryPosition | null; parentId: string | null }>();
 
   for (let depth = 0; depth < maxDepth && currentLevelParentIds.length > 0; depth++) {
     const children = await prisma.binaryNode.findMany({
@@ -298,18 +309,42 @@ export async function getMySubtree(userId: string, maxDepth: number): Promise<Su
     });
 
     for (const child of children) {
-      const node: SubtreeNode = {
+      allUserIds.push(child.userId);
+      rawNodesById.set(child.userId, {
         userId: child.userId,
         name: child.user.name,
         position: child.position,
-        children: [],
-      };
-      const siblings = nodesByParent.get(child.parentId!) ?? [];
-      siblings.push(node);
-      nodesByParent.set(child.parentId!, siblings);
+        parentId: child.parentId,
+      });
     }
 
     currentLevelParentIds = children.map((c) => c.userId);
+  }
+
+  // One batched query for every node's personal BV (their own investment
+  // amounts) rather than N+1 per-node lookups — matches this function's
+  // existing "one query per depth level" batching discipline.
+  const personalBvByUserId = new Map<string, Prisma.Decimal>();
+  const investmentSums = await prisma.investment.groupBy({
+    by: ["userId"],
+    where: { userId: { in: allUserIds } },
+    _sum: { amount: true },
+  });
+  for (const row of investmentSums) {
+    personalBvByUserId.set(row.userId, row._sum.amount ?? new Prisma.Decimal(0));
+  }
+
+  for (const raw of rawNodesById.values()) {
+    const node: SubtreeNode = {
+      userId: raw.userId,
+      name: raw.name,
+      position: raw.position,
+      personalBv: personalBvByUserId.get(raw.userId) ?? new Prisma.Decimal(0),
+      children: [],
+    };
+    const siblings = nodesByParent.get(raw.parentId!) ?? [];
+    siblings.push(node);
+    nodesByParent.set(raw.parentId!, siblings);
   }
 
   function attachChildren(node: SubtreeNode): SubtreeNode {
@@ -321,6 +356,7 @@ export async function getMySubtree(userId: string, maxDepth: number): Promise<Su
     userId: rootNode.userId,
     name: rootNode.user.name,
     position: rootNode.position,
+    personalBv: personalBvByUserId.get(rootNode.userId) ?? new Prisma.Decimal(0),
     children: [],
   });
 }

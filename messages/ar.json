@@ -379,7 +379,11 @@
     "matchedVolumeLabel": "الحجم المطابق",
     "commissionPaidLabel": "Binary Commission المدفوعة",
     "carryForwardLeftLabel": "الترحيل - LEFT",
-    "carryForwardRightLabel": "الترحيل - RIGHT"
+    "carryForwardRightLabel": "الترحيل - RIGHT",
+    "currentLegVolumesHeading": "هذا الأسبوع حتى الآن",
+    "weakLegLabel": "الساق الضعيفة: {leg}",
+    "estimatedCommissionLabel": "Binary Commission المقدّرة",
+    "estimatedCommissionNote": "ما ستحصل عليه إذا أُغلقت الدورة الآن، بناءً على الأحجام الحالية. ليس ضمانًا — يتم التحقق من التأهل عند إغلاق يوم السبت الفعلي."
   },
   "Profile": {
     "pageTitle": "الملف الشخصي",

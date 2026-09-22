@@ -379,7 +379,11 @@
     "matchedVolumeLabel": "Matched volume",
     "commissionPaidLabel": "Binary Commission paid",
     "carryForwardLeftLabel": "LEFT carry forward",
-    "carryForwardRightLabel": "RIGHT carry forward"
+    "carryForwardRightLabel": "RIGHT carry forward",
+    "currentLegVolumesHeading": "This week so far",
+    "weakLegLabel": "Weak leg: {leg}",
+    "estimatedCommissionLabel": "Estimated Binary Commission",
+    "estimatedCommissionNote": "What you would earn if the cycle closed right now, based on current volumes. Not a guarantee — qualification is checked at the actual Saturday close."
   },
   "Profile": {
     "pageTitle": "Profile",

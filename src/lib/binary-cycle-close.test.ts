@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
-import { closeBinaryCycleForUser } from "./binary-cycle";
+import { closeBinaryCycleForUser, getMyCurrentLegVolumes } from "./binary-cycle";
 import { registerAsRoot, registerWithSponsor, suspendUser } from "./users";
 import { cleanupLedgerEntriesForUsers } from "./test-helpers";
 
@@ -489,5 +489,105 @@ describe("closeBinaryCycleForUser", () => {
       where: { userId: sponsor.id, entryType: "BINARY_COMMISSION" },
     });
     expect(ledgerCount).toBe(0);
+  });
+});
+
+describe("getMyCurrentLegVolumes", () => {
+  it("mirrors closeBinaryCycleForUser's own math for the same moment: same left/right/matched/commission, read-only (no binary_cycles row written)", async () => {
+    const { sponsor, leftInvestment, rightInvestment } = await makeQualifiedSponsor("preview-match");
+
+    const priorWeekStart = new Date(WEEK_START.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const priorCycle = await prisma.binaryCycle.create({
+      data: {
+        userId: sponsor.id,
+        weekStart: priorWeekStart,
+        weekEnd: new Date(priorWeekStart.getTime() + 6 * 24 * 60 * 60 * 1000 + 86399999),
+        leftVolume: "8000",
+        rightVolume: "0",
+        matchedVolume: "0",
+        commissionPaid: "0",
+        carryLeft: "8000",
+        carryRight: "0",
+        carryLeftSince: priorWeekStart,
+        carryRightSince: null,
+        qualified: true,
+        idempotencyKey: `binary:${sponsor.id}:${priorWeekStart.toISOString()}`,
+      },
+    });
+    createdCycleIds.push(priorCycle.id);
+
+    await seedBvEntry(sponsor.id, leftInvestment.id, "LEFT", "7000", WEEK_START);
+    await seedBvEntry(sponsor.id, rightInvestment.id, "RIGHT", "7000", WEEK_START);
+
+    // A point in time inside the still-open current week (Tuesday of that week).
+    const midWeekNow = new Date(WEEK_START.getTime() + 2 * 24 * 60 * 60 * 1000);
+    const preview = await getMyCurrentLegVolumes(sponsor.id, midWeekNow);
+
+    expect(preview.leftVolume.toString()).toBe("15000");
+    expect(preview.rightVolume.toString()).toBe("7000");
+    expect(preview.weakLeg).toBe("RIGHT");
+
+    const activeConfig = await prisma.commissionConfig.findFirstOrThrow({ where: { effectiveTo: null } });
+    const expectedCommission = new Prisma.Decimal("7000").mul(activeConfig.binaryRate).div(100);
+    expect(preview.estimatedCommission.toString()).toBe(expectedCommission.toString());
+
+    // Purely a preview — must never write a binary_cycles row for the still-open week.
+    const writtenCycle = await prisma.binaryCycle.findUnique({
+      where: { userId_weekStart: { userId: sponsor.id, weekStart: WEEK_START } },
+    });
+    expect(writtenCycle).toBeNull();
+
+    // Now actually close the week and confirm the real close agrees exactly
+    // with what the preview said it would be.
+    const realCycle = await closeBinaryCycleForUser(sponsor.id, WEEK_START, WEEK_END);
+    createdCycleIds.push(realCycle.id);
+    expect(new Prisma.Decimal(realCycle.leftVolume).toString()).toBe(preview.leftVolume.toString());
+    expect(new Prisma.Decimal(realCycle.rightVolume).toString()).toBe(preview.rightVolume.toString());
+    expect(new Prisma.Decimal(realCycle.commissionPaid).toString()).toBe(preview.estimatedCommission.toString());
+  });
+
+  it("treats a user with no prior cycle and no BV yet as 0/0, weak leg LEFT (tie), zero estimated commission", async () => {
+    const { sponsor } = await makeQualifiedSponsor("preview-empty");
+
+    const midWeekNow = new Date(WEEK_START.getTime() + 2 * 24 * 60 * 60 * 1000);
+    const preview = await getMyCurrentLegVolumes(sponsor.id, midWeekNow);
+
+    expect(preview.leftVolume.toString()).toBe("0");
+    expect(preview.rightVolume.toString()).toBe("0");
+    expect(preview.weakLeg).toBe("LEFT");
+    expect(preview.estimatedCommission.toString()).toBe("0");
+  });
+
+  it("carries forward surviving carry-in from the last closed cycle even before any of this week's own BV has landed", async () => {
+    const { sponsor } = await makeQualifiedSponsor("preview-carry-only");
+
+    const priorWeekStart = new Date(WEEK_START.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const priorCycle = await prisma.binaryCycle.create({
+      data: {
+        userId: sponsor.id,
+        weekStart: priorWeekStart,
+        weekEnd: new Date(priorWeekStart.getTime() + 6 * 24 * 60 * 60 * 1000 + 86399999),
+        leftVolume: "0",
+        rightVolume: "300",
+        matchedVolume: "0",
+        commissionPaid: "0",
+        carryLeft: "0",
+        carryRight: "300",
+        carryLeftSince: null,
+        carryRightSince: priorWeekStart,
+        qualified: true,
+        idempotencyKey: `binary:${sponsor.id}:${priorWeekStart.toISOString()}`,
+      },
+    });
+    createdCycleIds.push(priorCycle.id);
+
+    // No bv_entries seeded for the current week at all.
+    const midWeekNow = new Date(WEEK_START.getTime() + 2 * 24 * 60 * 60 * 1000);
+    const preview = await getMyCurrentLegVolumes(sponsor.id, midWeekNow);
+
+    expect(preview.leftVolume.toString()).toBe("0");
+    expect(preview.rightVolume.toString()).toBe("300");
+    expect(preview.weakLeg).toBe("LEFT");
+    expect(preview.estimatedCommission.toString()).toBe("0");
   });
 });
