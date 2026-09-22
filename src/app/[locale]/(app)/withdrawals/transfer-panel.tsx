@@ -16,7 +16,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { transferAtoBAction, transferCtoBAction, type WithdrawalActionErrorKey } from "./actions";
-import { toDisplayWithCurrency } from "@/lib/display";
+import { toDisplayWithCurrency, toDisplayAmountPreview } from "@/lib/display";
 
 type TransferDirection = "A" | "C";
 
@@ -159,8 +159,8 @@ function TransferCard({
             {!success && (
               <DialogDescription>
                 {direction === "A"
-                  ? t("transferConfirmDescriptionA", { amount: toDisplayWithCurrency(amount) })
-                  : t("transferConfirmDescriptionC", { amount: toDisplayWithCurrency(amount) })}
+                  ? t("transferConfirmDescriptionA", { amount: toDisplayAmountPreview(amount) })
+                  : t("transferConfirmDescriptionC", { amount: toDisplayAmountPreview(amount) })}
               </DialogDescription>
             )}
             {success && <DialogDescription>{t("transferSuccessDescription")}</DialogDescription>}

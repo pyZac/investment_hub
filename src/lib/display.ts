@@ -48,6 +48,30 @@ export function toDisplayWithCurrency(value: Prisma.Decimal.Value): string {
 }
 
 /**
+ * For previewing a LIVE, possibly-empty/partial numeric `<input>` string in a
+ * confirmation dialog before it's validated (e.g. a transfer/credit amount
+ * field while its dialog is closed or the field hasn't been typed into yet).
+ * `toDisplayWithCurrency`/`toDisplay` stay strict Decimal parsers per
+ * invariant #1 (a bad value there should throw, not be silently coerced) —
+ * this wrapper exists only for a JSX expression that runs on every render of
+ * a mounted confirmation dialog regardless of whether it's open, where the
+ * backing input state can legitimately be "" or a partial value like "12."
+ * Never use this for anything that reaches a server action, ledger write, or
+ * other real money calculation — those must keep using the strict functions
+ * so invalid input is caught, not papered over as $0.00.
+ */
+export function toDisplayAmountPreview(rawInput: string): string {
+  if (rawInput.trim() === "") {
+    return toDisplayWithCurrency(0);
+  }
+  try {
+    return toDisplayWithCurrency(rawInput);
+  } catch {
+    return toDisplayWithCurrency(0);
+  }
+}
+
+/**
  * Formats a date in the business timezone (Asia/Dubai). Forces Western
  * Arabic numerals (0-9) even under the "ar" locale via the `-u-nu-latn`
  * Unicode extension — Eastern Arabic numerals are never acceptable for

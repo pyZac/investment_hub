@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Prisma } from "@prisma/client";
-import { toDisplay, toDisplayWithCurrency, formatDate } from "./display";
+import { toDisplay, toDisplayWithCurrency, toDisplayAmountPreview, formatDate } from "./display";
 
 describe("toDisplay", () => {
   it("formats a standard value to 2 decimal places", () => {
@@ -94,6 +94,32 @@ describe("toDisplayWithCurrency", () => {
 
   it("does not change toDisplay's own output (regression guard: two independent functions, not one mutated in place)", () => {
     expect(toDisplay(new Prisma.Decimal("10000"))).toBe("10000.00");
+  });
+});
+
+describe("toDisplayAmountPreview", () => {
+  it("formats a valid live-input string like toDisplayWithCurrency", () => {
+    expect(toDisplayAmountPreview("1000")).toBe("$1,000.00");
+  });
+
+  it("returns $0.00 for an empty string instead of throwing (regression: confirmation dialogs render this before the amount field is typed into)", () => {
+    expect(toDisplayAmountPreview("")).toBe("$0.00");
+  });
+
+  it("returns $0.00 for a whitespace-only string", () => {
+    expect(toDisplayAmountPreview("   ")).toBe("$0.00");
+  });
+
+  it("returns $0.00 for a non-numeric string instead of throwing", () => {
+    expect(toDisplayAmountPreview("abc")).toBe("$0.00");
+  });
+
+  it("returns $0.00 for an already-formatted string instead of throwing (regression: a $-prefixed/comma string must never reach the Decimal constructor)", () => {
+    expect(toDisplayAmountPreview("$1,000.00")).toBe("$0.00");
+  });
+
+  it("formats a partial in-progress decimal like '12.'", () => {
+    expect(toDisplayAmountPreview("12.")).toBe("$12.00");
   });
 });
 

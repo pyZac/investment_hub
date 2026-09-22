@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { RecipientPicker } from "./recipient-picker";
 import { transferToUserAction, type TransferActionErrorKey, type RecipientOption } from "./actions";
-import { toDisplayWithCurrency } from "@/lib/display";
+import { toDisplayWithCurrency, toDisplayAmountPreview } from "@/lib/display";
 
 export function TransferForm({
   walletBBalance,
@@ -155,7 +155,7 @@ export function TransferForm({
             )}
             {!success && recipient && (
               <DialogDescription>
-                {t("confirmDescription", { recipientName: recipient.name, amount: toDisplayWithCurrency(amount) })}
+                {t("confirmDescription", { recipientName: recipient.name, amount: toDisplayAmountPreview(amount) })}
               </DialogDescription>
             )}
             {success && recipient && (
@@ -174,7 +174,7 @@ export function TransferForm({
               <div className="flex flex-row items-center justify-between gap-2">
                 <span className="text-muted-foreground">{t("summaryAmount")}</span>
                 <span dir="ltr" className="font-heading font-semibold tabular-nums">
-                  {toDisplayWithCurrency(amount)}
+                  {toDisplayAmountPreview(amount)}
                 </span>
               </div>
             </div>

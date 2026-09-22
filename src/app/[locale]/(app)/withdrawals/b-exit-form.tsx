@@ -16,7 +16,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { submitWithdrawalRequestAction, type WithdrawalActionErrorKey } from "./actions";
-import { toDisplayWithCurrency } from "@/lib/display";
+import { toDisplayAmountPreview } from "@/lib/display";
 
 const MIN_WITHDRAWAL = 50;
 
@@ -148,7 +148,7 @@ export function BExitForm({
               <DialogTitle>{t("bExitConfirmTitle")}</DialogTitle>
             )}
             {!success && (
-              <DialogDescription>{t("bExitConfirmDescription", { amount: toDisplayWithCurrency(amount) })}</DialogDescription>
+              <DialogDescription>{t("bExitConfirmDescription", { amount: toDisplayAmountPreview(amount) })}</DialogDescription>
             )}
             {success && <DialogDescription>{t("bExitSuccessDescription")}</DialogDescription>}
           </DialogHeader>
