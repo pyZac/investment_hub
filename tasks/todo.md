@@ -1,68 +1,76 @@
-# Session: Binary tree page display improvements
+# Session: Public informative pages (pre-login marketing site)
 
-Both improvements are display-only, no backend/business-logic changes to
-paid amounts, ledger writes, or the cycle-close job. Bilingual EN/AR.
+Bilingual EN/AR, dark Deep-Teal-&-Mint design system (matches dashboard),
+no backend changes. New route group `(public)` alongside existing `(app)`
+and `admin` groups so the public header never leaks into dashboard/admin.
 
-## Improvement 1 — personal BV on each tree node
+## Architecture decisions
 
-- [ ] `src/lib/binary-tree.ts`: extend `SubtreeNode` with `personalBv: string`
-      (a Decimal-as-string, "personal BV" = sum of that user's own
-      `Investment.amount` — the amount that rolls up to ancestors per
-      `rollupBvForPurchase`/mlm_rules_log.md Section 5's BV definition, not
-      leftBv/rightBv which are subtree totals, not personal). Batch-fetch via
-      one `groupBy` over all node userIds per depth level rather than N+1
-      queries.
-- [ ] `binary-tree-view.tsx`: thread `personalBv` through `toRawNodeDatum`'s
-      `NodeAttributes`, render "BV: $X" under the name in `CustomNode`
-      (format with `toDisplayWithCurrency`, `dir="ltr"` like the rest of the
-      node's numeric bits). Root node included too — it has personal BV like
-      any other node.
-- [ ] Add/extend `messages/en.json` + `messages/ar.json`: a `nodeBvLabel` key
-      ("BV" — stays English per financial-terminology rule, but the key
-      itself still goes through next-intl for consistency/future-proofing).
+- New route group `src/app/[locale]/(public)/` holding: `page.tsx` (home,
+  replaces the placeholder currently at `(app)/page.tsx` — the root route
+  moves from `(app)` to `(public)`), `about/page.tsx`,
+  `how-we-invest/page.tsx`, `sectors/page.tsx`, plus its own
+  `layout.tsx` for the public header + footer.
+- `(app)/page.tsx` gets deleted (its content moves to `(public)/page.tsx`);
+  `(app)/layout.tsx`'s unauthenticated branch (the bare
+  LanguageSwitcher-only header) becomes dead code for `/` specifically
+  once `/` moves out of that group, but review whether anything else in
+  `(app)` is reachable while logged out (register, login are, and keep
+  their current minimal header — not part of this ticket's scope, per
+  "don't scope-creep").
+- Real image filenames on disk use spaces (`city skylines_1.jpg`, not
+  `city_skylines_1`) — using the actual files, not renaming them.
+- Shared `PublicHeader`/`PublicFooter`/`PublicHero` components in
+  `src/components/public/` (new dir) — one header used by all 4 pages via
+  the `(public)/layout.tsx`, not duplicated per page.
+- New translation namespace `Public` in en.json/ar.json for nav + footer +
+  home page; `About`, `HowWeInvest`, `Sectors` namespaces for the other 3
+  pages' body content (kept separate from `Public` so each page's content
+  block stays easy to find/edit independently, matching this project's
+  existing one-namespace-per-page-area convention).
+- Financial/brand terms stay English in Arabic per bilingual-rtl skill:
+  "INVESTA" wordmark, Wallet A/B/C (not used here), but plain marketing
+  copy translates fully — this content is general marketing text, not
+  financial terminology, so ALL of it (headings, body paragraphs) gets a
+  real Arabic translation, not just labels.
 
-## Improvement 2 — live leg volumes + estimated commission pre-close
+## Build order
 
-- [ ] `src/lib/binary-cycle.ts`: export `activeCommissionConfigAt` (currently
-      module-private) and add a new read-only
-      `getMyCurrentLegVolumes(userId, now)`:
-      - current week = `saturdayWeekStart(now)`
-      - carry-in from the most recently closed cycle (prior week), same
-        expiry logic as `closeBinaryCycleForUser` (reuse `applyExpiry`)
-      - this week's BV via `bvEntry.groupBy` for `cycleWeekStart: currentWeekStart`
-      - left/right = survivingCarry + thisWeek's BV (mirrors closeBinaryCycleForUser
-        exactly, but never writes anything — no transaction, no postTransaction,
-        no binaryCycle row)
-      - estimated commission = min(left,right) * activeCommissionConfigAt(now).binaryRate / 100
-      - weak leg = whichever of left/right is lower (tie -> LEFT, matching
-        weakerLeg's existing tie rule in binary-tree.ts)
-      - returns { leftVolume, rightVolume, weakLeg, estimatedCommission } as
-        Decimal-as-strings
-- [ ] `page.tsx`: fetch this alongside the existing latestCycle fetch, pass to
-      `BinaryPanel` as a new `currentLegVolumes` prop, unconditionally
-      (CONFIRMED with user: always show the live this-week-so-far section,
-      for every user regardless of whether they have closed-cycle history).
-- [ ] `binary-panel.tsx`: add a new section — always rendered, both in the
-      `cycle === null` branch and alongside the existing closed-cycle summary
-      — showing LEFT/RIGHT volume bars (reuse `VolumeBar`), weak-leg label,
-      and the estimated commission, clearly marked as an estimate, not a
-      guarantee (wording: "if the cycle closed right now").
-- [ ] New translation keys: `currentLegVolumesHeading`, `weakLegLabel`,
-      `estimatedCommissionLabel`, `estimatedCommissionNote` (disclaimer),
-      `en.json` + `ar.json`.
+- [ ] `src/components/public/public-header.tsx` — logo, nav links (Home/
+      About/How We Invest/Sectors), Login button, LanguageSwitcher,
+      mobile hamburger via existing `MobileNavSheet`, sticky top.
+- [ ] `src/components/public/public-footer.tsx` — copyright + Login link.
+- [ ] `src/components/public/public-hero.tsx` — reusable full-width image
+      hero (next/image fill + object-cover, dark gradient overlay for
+      text legibility per design system's dark-only theme) taking
+      image src, headline, subheadline, optional CTA.
+- [ ] `src/app/[locale]/(public)/layout.tsx` — wraps children with
+      PublicHeader + PublicFooter.
+- [ ] `src/app/[locale]/(public)/page.tsx` — Home.
+- [ ] `src/app/[locale]/(public)/about/page.tsx` — About.
+- [ ] `src/app/[locale]/(public)/how-we-invest/page.tsx` — How We Invest.
+- [ ] `src/app/[locale]/(public)/sectors/page.tsx` — Sectors.
+- [ ] Delete `src/app/[locale]/(app)/page.tsx` (moved to (public)).
+- [ ] `messages/en.json` + `messages/ar.json`: add `Public`, `About`,
+      `HowWeInvest`, `Sectors` namespaces with the exact content given,
+      full Arabic translation for ar.json (not machine-literal English
+      terms left untranslated, except INVESTA and any genuinely
+      untranslatable proper nouns like place names — Marbella, Dubai,
+      etc. stay as-is/transliterated per normal Arabic convention).
+- [ ] Remove/repurpose now-unused `HomePage` key if nothing else uses it.
 
 ## Verification
-- [x] tsc --noEmit clean
-- [x] New tests added: personalBv (binary-tree-subtree.test.ts, 2 new cases)
-      and getMyCurrentLegVolumes (binary-cycle-close.test.ts, 3 new cases,
-      including a direct cross-check against closeBinaryCycleForUser's real
-      output for the same data)
-- [x] Full suite: 605/606 passed (1 pre-existing skip), 0 reconciliation drift
-- [ ] Manual browser check /en and /ar binary-tree page — BLOCKED: no
-      marketer-flagged non-test user with tree data exists in dev, and both
-      credential-materialization workarounds (setting a known password,
-      minting a session token) were correctly denied by the sandbox as
-      Secret-Store Writes / Credential Materialization. Verified instead via
-      a read-only scratch script confirming getMySubtree/getMyCurrentLegVolumes
-      return correct, expected values against real dev data (demo-user).
+- [x] tsc --noEmit clean (required a `.next/types` cache clear + container
+      restart after moving `page.tsx` between route groups — Next.js kept
+      the deleted route registered in the dev server's in-memory route
+      table until restarted, causing transient 404s on all 4 new pages)
+- [x] security-headers.test.ts (checks "/") passes; full suite 605/606 (1
+      pre-existing skip), 0 reconciliation drift
+- [x] Confirmed via curl: /en, /ar, /about, /how-we-invest, /sectors all
+      200, real Arabic text renders (not English fallback) under /ar with
+      dir="rtl"/lang="ar" on <html>, no physical left-/right-/ml-/mr-/pl-/
+      pr-/text-left/text-right classes anywhere in the new code
+- [x] Confirmed /en/login still renders its OWN minimal header (no public
+      nav links actually rendered — only present in the embedded i18n
+      messages JSON blob, which is normal/expected)
 - [x] Commit + push

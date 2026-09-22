@@ -1719,3 +1719,33 @@ full-suite run for reasons having nothing to do with the diff — investigate
 before assuming "must be related to what I just changed" or "must be
 flaky," and before assuming it's safe to ignore as unrelated without
 tracing the actual mechanism.
+
+## 2026-09-22 — post-phase (public marketing pages, SCRUM-N/A)
+Note (environment quirk, not a code bug): moving the root route's
+`page.tsx` from one route group to a new sibling route group
+(`(app)/page.tsx` deleted, `(public)/page.tsx` created at the same `/`
+URL, same session) produced two separate false alarms in a row, both from
+the same root cause — the running `docker compose` dev server's
+in-memory/`.next` route table kept the OLD registration and didn't
+recognize the move: (1) `tsc --noEmit` failed with `Cannot find module
+'../../src/app/[locale]/(app)/page.js'` from a stale `.next/types/
+validator.ts` referencing the deleted file — fixed by deleting
+`.next/types` before re-running tsc; (2) after that, curling the new
+pages returned 404 for all of them even though the dev server logs
+showed `/[locale]` actually compiling — the file-system watcher had
+picked up the new file for compilation but the router itself still had
+the old route table cached, so it fell through to `_not-found`. Only a
+full `docker compose restart app` (not just deleting `.next/types`)
+resolved this; a bare recompile-on-request wasn't enough.
+Rule: any time a route's `page.tsx` is deleted from one path and a new
+one is created at the exact same URL (whether via a route-group move,
+like this session, or any other restructuring that keeps the URL but
+changes which file serves it), expect this class of stale-route-table
+symptom — don't debug the new page's own code first if it 404s
+immediately after such a move; restart the dev server (`docker compose
+restart app`) and re-verify before assuming the new route/component is
+broken. This is a variant of the standing container/host Prisma-Client
+-staleness lesson (Phase 3, restated Phase 5) applied to Next's route
+table instead of the Prisma client — same shape ("the running process
+has stale generated state that a file-system change alone doesn't
+invalidate"), different subsystem.
