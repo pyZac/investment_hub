@@ -1749,3 +1749,65 @@ broken. This is a variant of the standing container/host Prisma-Client
 table instead of the Prisma client — same shape ("the running process
 has stale generated state that a file-system change alone doesn't
 invalidate"), different subsystem.
+
+## 2026-09-23 — post-phase (critical bug: interest rate missing /100 conversion)
+Mistake (real, pre-existing, shipped since Phase 4 — not introduced this
+session): `interest-rate.ts`'s `dailyRate()` returned
+`monthlyRate.div(divisor)` with NO division by 100.
+`interest_rate_config.monthly_rate` is stored as a plain percentage
+number (5 means "5%", confirmed against the real seeded row and
+rate-config.test.ts's own `monthlyRate: "9"` fixtures) — every OTHER rate
+consumer in this codebase (`direct-commission.ts`'s
+`amount.mul(config.directRate).div(100)`, `binary-cycle.ts`'s
+`matched.mul(config.binaryRate).div(100)`) correctly divides by 100
+before using a percentage-number rate as a multiplier. `dailyRate()` was
+the one place that skipped this, and its one real consumer,
+`accrueDailyInterestForInvestment` (`daily-interest.ts`), used the
+undivided value directly (`runningBalance.mul(rate)`) — meaning every
+real DAILY_INTEREST ledger entry this system has ever posted, in dev AND
+in the live production app, credited ~100x too much interest. This was
+reported to me as a "solvency.ts display bug" (a 30-day projection
+showing $14.28M instead of ~$77K on a $73K Wallet A total), and
+`solvency.ts`'s own `(1+rate)^30` formula was in fact already correct —
+but tracing the exact same rate value through the REAL accrual engine's
+own day-by-day formula reproduced the identical $14,288,059.04, proving
+the bug was upstream in `dailyRate()` itself, not particular to the
+solvency projection's compounding.
+Root cause found by: (1) confirming the DB's real seeded `monthlyRate`
+value (`5`, not `500` — the ticket's initial "stored as basis points"
+framing was a plausible but incorrect guess at the mechanism); (2)
+finding the codebase's own established, correctly-applied convention
+elsewhere (`mul(rate).div(100)`) via grep, rather than guessing what the
+"right" formula should be from first principles; (3) literally simulating
+the real engine's own formula in isolation to confirm it independently
+reproduced the exact reported buggy number, not just a similarly-wrong
+one — that's what proved this was one shared root cause (a single
+missing `/100` in `dailyRate()`) rather than two coincidentally-similar
+bugs in two different files.
+Rule: (1) When a "display bug" ticket's numbers are wrong by a suspiciously
+round factor (100x here), check every OTHER consumer of the same
+upstream value before assuming the bug is local to the one file/formula
+named in the ticket — a shared root cause one level up is common, and
+fixing only the named symptom leaves the real engine broken. (2) Before
+touching any function whose output feeds `postTransaction`/ledger writes,
+stop and confirm scope explicitly with the user once real financial
+impact is discovered — fixing the formula prospectively (so future runs
+are correct) is a different, much lower-risk action than reversing or
+recomputing historical ledger entries (append-only, invariant #2), and
+the two must never be bundled into the same silent fix. This session
+fixed `dailyRate()` only (stops future over-crediting) and explicitly did
+NOT touch any historical ledger data — that remediation needs its own
+separate planning pass (deciding what "correct" real balances should be,
+whether/how to notify affected users, whether reversing entries or some
+other correction mechanism applies) before any code touches production
+data. (3) Grepped for every hardcoded test expectation that
+independently reconstructed the same `monthlyRate.div(divisor)` pattern
+(found in `interest-rate.test.ts`, `daily-interest.test.ts`, AND
+`phase-4-exit-test.test.ts` — the latter caught only by actually running
+the full suite, not by the initial targeted grep, since its literal used
+a differently-named local variable at a different line shape than the
+grep pattern first used). A fix to a widely-consumed rate function is not
+"done" until every test file that hand-computes an expected value from
+the same raw config field has been re-derived, not just the ones a first
+grep pass happens to catch — run the full suite as the actual completeness
+check, not the grep.

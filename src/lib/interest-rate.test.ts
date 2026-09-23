@@ -14,7 +14,7 @@ describe("dailyRate", () => {
     }
   });
 
-  it("divides the active monthly rate by days-in-month excluding Fridays", async () => {
+  it("divides the active monthly rate by days-in-month excluding Fridays, then by 100 to convert from a percentage-scale number to a true fraction", async () => {
     // August 2026 (Asia/Dubai): 31 days, 4 Fridays (7/14/21/28) -> divisor 27.
     const forDate = new Date("2026-08-20T06:00:00.000Z");
 
@@ -23,7 +23,7 @@ describe("dailyRate", () => {
     const activeConfig = await prisma.interestRateConfig.findFirstOrThrow({
       where: { effectiveTo: null },
     });
-    const expected = new Prisma.Decimal(activeConfig.monthlyRate).div(27);
+    const expected = new Prisma.Decimal(activeConfig.monthlyRate).div(27).div(100);
 
     expect(rate.toFixed(8)).toBe(expected.toFixed(8));
   });
@@ -79,9 +79,9 @@ describe("dailyRate", () => {
 
       // August 2026: 31 days, 4 Fridays -> divisor 27, for both windows.
       expect(beforeBoundary.toFixed(8)).toBe(
-        new Prisma.Decimal(active.monthlyRate).div(27).toFixed(8),
+        new Prisma.Decimal(active.monthlyRate).div(27).div(100).toFixed(8),
       );
-      expect(afterBoundary.toFixed(8)).toBe(new Prisma.Decimal("8").div(27).toFixed(8));
+      expect(afterBoundary.toFixed(8)).toBe(new Prisma.Decimal("8").div(27).div(100).toFixed(8));
     } finally {
       // Restore original single-active-row state.
       await prisma.interestRateConfig.delete({ where: { id: newConfig.id } });

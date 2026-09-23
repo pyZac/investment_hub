@@ -179,7 +179,7 @@ describe("accrueDailyInterestForInvestment", () => {
     expect(debit.comment).toBe(credit.comment);
 
     // August 2026: 31 days, 4 Fridays -> divisor 27. Active rate is 5%.
-    const expectedRate = new Prisma.Decimal("5").div(27);
+    const expectedRate = new Prisma.Decimal("5").div(27).div(100);
     const expectedAmount = expectedRate.mul("1000");
     expect(new Prisma.Decimal(credit.amount).toFixed(8)).toBe(expectedAmount.toFixed(8));
     expect(new Prisma.Decimal(debit.amount).toFixed(8)).toBe(expectedAmount.toFixed(8));
@@ -218,7 +218,7 @@ describe("accrueDailyInterestForInvestment", () => {
     expect(rf.skipped).toBe(true);
 
     // August 2026 divisor = 27, rate 5%.
-    const dailyRateValue = new Prisma.Decimal("5").div(27);
+    const dailyRateValue = new Prisma.Decimal("5").div(27).div(100);
     const principal = new Prisma.Decimal("1000");
 
     const expectedDay1Amount = principal.mul(dailyRateValue);

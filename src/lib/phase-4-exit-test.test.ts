@@ -132,7 +132,10 @@ function simulateReferenceBalance(
 
     const monthlyRate = new Prisma.Decimal(rateScheduleDesc(cursor));
     const divisor = daysInUtcMonthExcludingFridays(cursor);
-    const dailyRateValue = monthlyRate.div(divisor);
+    // monthlyRate is a plain percentage number (5 means "5%"), so it needs
+    // /100 to become a true fractional multiplier — matches dailyRate()'s
+    // own conversion in interest-rate.ts.
+    const dailyRateValue = monthlyRate.div(divisor).div(100);
     // The real system stores each day's credited amount in a
     // NUMERIC(24,8) column, then re-reads that rounded value as the base
     // for the next day's compounding (accrueDailyInterestForInvestment sums
@@ -394,8 +397,8 @@ describe("Phase 4 exit test — 90 fabricated days", () => {
       );
       const impliedDailyRateBefore = new Prisma.Decimal(entryBefore!.amount).div(balanceStartOfDayBefore);
       const impliedDailyRateAfter = new Prisma.Decimal(entryAfter!.amount).div(balanceStartOfDayAfter);
-      const expectedDailyRateBefore = new Prisma.Decimal("5").div(daysInUtcMonthExcludingFridays(dayBeforeChange));
-      const expectedDailyRateAfter = new Prisma.Decimal("7").div(daysInUtcMonthExcludingFridays(dayOfChange));
+      const expectedDailyRateBefore = new Prisma.Decimal("5").div(daysInUtcMonthExcludingFridays(dayBeforeChange)).div(100);
+      const expectedDailyRateAfter = new Prisma.Decimal("7").div(daysInUtcMonthExcludingFridays(dayOfChange)).div(100);
 
       expect(impliedDailyRateBefore.toFixed(10)).toBe(expectedDailyRateBefore.toFixed(10));
       expect(impliedDailyRateAfter.toFixed(10)).toBe(expectedDailyRateAfter.toFixed(10));

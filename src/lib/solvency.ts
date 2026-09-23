@@ -88,6 +88,20 @@ export type SolvencyOverview = {
  * business logic (accrueDailyInterestForInvestment's own day-by-day
  * walk), which this ticket explicitly does not want. Labeled as an
  * estimate in the UI for exactly this reason.
+ *
+ * Bug history: this formula itself was always correct — the bug was
+ * upstream, in `dailyRate()` returning a percentage-scale number (e.g.
+ * 0.1923 for a 5%-monthly config, meaning "0.1923%") without the final
+ * `/100` every other rate consumer in this codebase applies
+ * (direct-commission.ts, binary-cycle.ts both do `mul(rate).div(100)`).
+ * Compounding that undivided value via `(1 + rate)^30` computed
+ * `(1.1923)^30`, i.e. treated the daily rate as 19.23% per day instead of
+ * 0.1923% per day — a $73,000 Wallet A total projected to ~$14.28M instead
+ * of ~$77,300. Fixed at the source in `dailyRate()` itself (interest-rate.ts)
+ * rather than here, since `accrueDailyInterestForInvestment` — the real
+ * engine that actually credits user wallets — consumed the same
+ * undivided value and had the identical bug in every live DAILY_INTEREST
+ * ledger entry it has ever posted.
  */
 export async function getSolvencyOverview(actingAdminId: string, forDate: Date): Promise<SolvencyOverview> {
   await assertHasSolvencyViewPermission(actingAdminId);
