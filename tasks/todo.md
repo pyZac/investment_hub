@@ -1,76 +1,76 @@
-# Session: Public informative pages (pre-login marketing site)
+# Session: Direct Commission rule change — pay on EVERY purchase, not just first
 
-Bilingual EN/AR, dark Deep-Teal-&-Mint design system (matches dashboard),
-no backend changes. New route group `(public)` alongside existing `(app)`
-and `admin` groups so the public header never leaks into dashboard/admin.
+Explicit business-rule change requested by project owner (not a bug fix —
+confirmed the "first purchase only" behavior was working exactly as
+designed; investigated the reported zero-commission case and found no
+matching data in dev DB, likely a production-only scenario, and the user
+decided to change the rule going forward rather than chase the original
+report further).
 
-## Architecture decisions
+## Scope, exactly as instructed
+1. Remove/bypass the first-purchase-only gate in direct-commission.ts so
+   commission fires on every investment purchase.
+2. Update mlm_rules_log.md Section 4 to state the new rule.
+3. tsc --noEmit, commit, push.
+4. Explicitly do NOT retroactively pay commission for past purchases —
+   only purchases from this point forward trigger it. No backfill script,
+   no historical ledger writes.
 
-- New route group `src/app/[locale]/(public)/` holding: `page.tsx` (home,
-  replaces the placeholder currently at `(app)/page.tsx` — the root route
-  moves from `(app)` to `(public)`), `about/page.tsx`,
-  `how-we-invest/page.tsx`, `sectors/page.tsx`, plus its own
-  `layout.tsx` for the public header + footer.
-- `(app)/page.tsx` gets deleted (its content moves to `(public)/page.tsx`);
-  `(app)/layout.tsx`'s unauthenticated branch (the bare
-  LanguageSwitcher-only header) becomes dead code for `/` specifically
-  once `/` moves out of that group, but review whether anything else in
-  `(app)` is reachable while logged out (register, login are, and keep
-  their current minimal header — not part of this ticket's scope, per
-  "don't scope-creep").
-- Real image filenames on disk use spaces (`city skylines_1.jpg`, not
-  `city_skylines_1`) — using the actual files, not renaming them.
-- Shared `PublicHeader`/`PublicFooter`/`PublicHero` components in
-  `src/components/public/` (new dir) — one header used by all 4 pages via
-  the `(public)/layout.tsx`, not duplicated per page.
-- New translation namespace `Public` in en.json/ar.json for nav + footer +
-  home page; `About`, `HowWeInvest`, `Sectors` namespaces for the other 3
-  pages' body content (kept separate from `Public` so each page's content
-  block stays easy to find/edit independently, matching this project's
-  existing one-namespace-per-page-area convention).
-- Financial/brand terms stay English in Arabic per bilingual-rtl skill:
-  "INVESTA" wordmark, Wallet A/B/C (not used here), but plain marketing
-  copy translates fully — this content is general marketing text, not
-  financial terminology, so ALL of it (headings, body paragraphs) gets a
-  real Arabic translation, not just labels.
+## Design decision: keep isDirectCommissionTriggerPurchase or remove it?
 
-## Build order
+`isDirectCommissionTriggerPurchase` is only consumed by
+`payDirectCommissionInTx` (confirmed via grep — binary-tree.ts/rank.ts
+only reference it in comments, no functional dependency). Removing the
+gate means every purchase becomes a "trigger" by definition, so the
+function itself becomes dead code once its one call site no longer calls
+it displaying its old "is this the first" question.
 
-- [ ] `src/components/public/public-header.tsx` — logo, nav links (Home/
-      About/How We Invest/Sectors), Login button, LanguageSwitcher,
-      mobile hamburger via existing `MobileNavSheet`, sticky top.
-- [ ] `src/components/public/public-footer.tsx` — copyright + Login link.
-- [ ] `src/components/public/public-hero.tsx` — reusable full-width image
-      hero (next/image fill + object-cover, dark gradient overlay for
-      text legibility per design system's dark-only theme) taking
-      image src, headline, subheadline, optional CTA.
-- [ ] `src/app/[locale]/(public)/layout.tsx` — wraps children with
-      PublicHeader + PublicFooter.
-- [ ] `src/app/[locale]/(public)/page.tsx` — Home.
-- [ ] `src/app/[locale]/(public)/about/page.tsx` — About.
-- [ ] `src/app/[locale]/(public)/how-we-invest/page.tsx` — How We Invest.
-- [ ] `src/app/[locale]/(public)/sectors/page.tsx` — Sectors.
-- [ ] Delete `src/app/[locale]/(app)/page.tsx` (moved to (public)).
-- [ ] `messages/en.json` + `messages/ar.json`: add `Public`, `About`,
-      `HowWeInvest`, `Sectors` namespaces with the exact content given,
-      full Arabic translation for ar.json (not machine-literal English
-      terms left untranslated, except INVESTA and any genuinely
-      untranslatable proper nouns like place names — Marbella, Dubai,
-      etc. stay as-is/transliterated per normal Arabic convention).
-- [ ] Remove/repurpose now-unused `HomePage` key if nothing else uses it.
+Decision: DELETE `isDirectCommissionTriggerPurchase` entirely rather than
+leaving an unused function around — matches project convention (no dead
+code) and the ticket's own wording ("remove or bypass that gate"). Its
+own tests (describe block "isDirectCommissionTriggerPurchase") get
+deleted too, since they test behavior that will no longer exist as a
+question the system asks.
+
+## Files to touch
+- [ ] `src/lib/direct-commission.ts`: delete `isDirectCommissionTriggerPurchase`,
+      remove its call + early-return in `payDirectCommissionInTx`, update
+      the function's own docstring (currently says "first purchase only",
+      "no-op... the purchase isn't the buyer's first") and the module-level
+      framing.
+- [ ] `src/lib/direct-commission.test.ts`:
+      - Delete the `describe("isDirectCommissionTriggerPurchase", ...)` block
+        (4 tests) — tests a function that no longer exists.
+      - Delete/rewrite `"does nothing for a non-first purchase, regardless
+        of amount"` — this now asserts the OPPOSITE (a second purchase DOES
+        pay commission). Rename and flip assertions.
+      - Other tests (suspended sponsor/buyer, idempotency, no-sponsor,
+        purchasePackage wiring, listDirectCommissionHistoryForUser) are
+        unaffected — they all use a single first purchase already.
+      - Add a new test: two consecutive purchases by the same sponsored
+        user BOTH pay commission (the actual new behavior), confirming
+        amounts and saving_lot count for each.
+- [ ] `docs/mlm_rules_log.md` Section 4: replace "Trigger: a directly
+      -sponsored user's first-ever package purchase only. Subsequent
+      purchases... do NOT generate Direct Commission again." with the new
+      rule: commission is paid on every purchase.
+- [ ] Check other docs referencing "first purchase" for Direct Commission
+      specifically (not MRV, which already has no such gate) — grep before
+      assuming only mlm_rules_log.md needs updating.
+
+## Non-goals (explicitly out of scope per instruction)
+- No retroactive/backfill commission for past purchases.
+- No change to MRV logic (already pays on every purchase — untouched).
+- No change to Binary Commission, interest, or any other engine.
+- No production data changes.
 
 ## Verification
-- [x] tsc --noEmit clean (required a `.next/types` cache clear + container
-      restart after moving `page.tsx` between route groups — Next.js kept
-      the deleted route registered in the dev server's in-memory route
-      table until restarted, causing transient 404s on all 4 new pages)
-- [x] security-headers.test.ts (checks "/") passes; full suite 605/606 (1
-      pre-existing skip), 0 reconciliation drift
-- [x] Confirmed via curl: /en, /ar, /about, /how-we-invest, /sectors all
-      200, real Arabic text renders (not English fallback) under /ar with
-      dir="rtl"/lang="ar" on <html>, no physical left-/right-/ml-/mr-/pl-/
-      pr-/text-left/text-right classes anywhere in the new code
-- [x] Confirmed /en/login still renders its OWN minimal header (no public
-      nav links actually rendered — only present in the embedded i18n
-      messages JSON blob, which is normal/expected)
+- [x] tsc --noEmit clean
+- [x] direct-commission.test.ts full pass (11/11) with rewritten tests,
+      including new "second purchase pays commission" case
+- [x] Full suite: 601/602 (1 pre-existing skip), 1 flaky security-headers
+      timeout confirmed unrelated (passed clean in isolated re-run)
+- [x] Also updated messages/en.json + ar.json's commissionHistoryDescription
+      (Referrals page UI copy) — confirmed with user, was describing the
+      old "first purchase" behavior and would have misled users
 - [x] Commit + push

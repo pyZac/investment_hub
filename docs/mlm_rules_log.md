@@ -49,7 +49,7 @@ Three **independent** systems, each with different tree logic:
 ## 4. Direct Commission
 
 - **Rate**: 8% (admin-editable, versioned — see build plan Decision 4), applies only to the **direct sponsor** (1 level, no upline beyond that)
-- Trigger: a directly-sponsored user's **first-ever package purchase only**. Subsequent purchases by that same user — including reinvestments funded by their own profit/commission withdrawals — do **not** generate Direct Commission again.
+- Trigger: **every** package purchase by a directly-sponsored user, not just their first. (Changed 2026-09-24 — previously first-purchase-only; the rule now pays Direct Commission on every qualifying purchase, including reinvestments.)
 - Split of the 8%:
   - **5%** → Commission Wallet (C) — immediately available
   - **3%** → Saving sub-wallet (under C) — **locked for 3 months**, then withdrawable to Wallet B
@@ -130,7 +130,7 @@ Commission = 8% of 7,000
 
 ### Monthly Rank Volume (MRV)
 - Definition: total investment volume generated **by the user's direct referrals' own personal purchases** during a calendar month
-- **Every purchase counts** — new purchases and reinvestments alike, with no first-purchase-only restriction. This is deliberately different from Direct Commission (Section 4), which only triggers on a referral's first-ever purchase — the two systems intentionally use different triggers.
+- **Every purchase counts** — new purchases and reinvestments alike, with no first-purchase-only restriction. (Direct Commission, Section 4, also now pays on every purchase as of 2026-09-24 — previously the two systems intentionally used different triggers, with Direct Commission first-purchase-only; that distinction no longer applies.)
 - **Depth = 1 level only** — a direct referral's own downline purchases do NOT count toward the sponsor's MRV (no sub-tree depth, unlike Binary Commission's roll-up logic)
 - Resets to 0 every month, **no carry forward**
 - Independent from Binary Volume (BV) — separate tracking
