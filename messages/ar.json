@@ -523,7 +523,7 @@
     "referralsEmptyStateDescription": "شارك رمز الإحالة أعلاه للبدء في تنمية شبكتك.",
 
     "commissionHistoryHeading": "سجل Direct Commission",
-    "commissionHistoryDescription": "المدفوعات التي تكسبها عند إجراء إحالاتك المباشرة عملية شراء.",
+    "commissionHistoryDescription": "المدفوعات التي تكسبها عند إجراء إحالاتك المباشرة أول عملية شراء لهم.",
     "destinationWalletC": "Wallet C",
     "destinationSaving": "SAVING",
     "commissionHistoryEmptyState": "لم تكسب أي Direct Commission بعد."

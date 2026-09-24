@@ -214,9 +214,8 @@ describe("MRV accrual on purchase (via purchasePackage)", () => {
     expect(afterFirst.volume.equals("1000")).toBe(true);
 
     // Reinvestment: a second purchase by the same referral, same month — MRV
-    // has no first-purchase-only gate, so this must add on top, not be
-    // skipped. (Direct Commission also has no such gate as of 2026-09-24,
-    // but the two systems remain independent — this test is about MRV only.)
+    // has no first-purchase-only gate (deliberately different from Direct
+    // Commission), so this must add on top, not be skipped.
     await fundWalletB(referral.id, "1000");
     await makePurchase(referral.id, pkg.id, new Date("2026-09-10T10:00:00.000Z"));
 

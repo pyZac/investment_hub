@@ -4,7 +4,11 @@ import { prisma } from "./prisma";
 import { registerAsRoot, registerWithSponsor } from "./users";
 import { adminCreditWalletB } from "./admin-credit";
 import { purchasePackage } from "./investments";
-import { payDirectCommission, listDirectCommissionHistoryForUser } from "./direct-commission";
+import {
+  isDirectCommissionTriggerPurchase,
+  payDirectCommission,
+  listDirectCommissionHistoryForUser,
+} from "./direct-commission";
 import { cleanupLedgerEntriesForUsers } from "./test-helpers";
 
 const createdUserIds: string[] = [];
@@ -89,8 +93,70 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+describe("isDirectCommissionTriggerPurchase", () => {
+  it("identifies a user's very first (and only) purchase as the trigger", async () => {
+    const user = await makeUser();
+    await fundWalletB(user.id, "1000");
+    const pkg = await makePackage("1000");
+
+    const investment = await makePurchase(user.id, pkg.id, new Date("2026-08-01T10:00:00.000Z"));
+
+    const result = await prisma.$transaction((tx) => isDirectCommissionTriggerPurchase(investment.id, tx));
+    expect(result).toBe(true);
+  });
+
+  it("identifies a second purchase (any amount, any funding source) as NOT the trigger, while the first stays true", async () => {
+    const user = await makeUser();
+    await fundWalletB(user.id, "1000");
+    const pkg1 = await makePackage("1000");
+    const first = await makePurchase(user.id, pkg1.id, new Date("2026-08-01T10:00:00.000Z"));
+
+    // Simulate a reinvestment funded from a different source (still lands in
+    // B — the trigger function only cares about purchase order, never about
+    // funding source, per the phase brief).
+    await fundWalletB(user.id, "50000");
+    const pkg2 = await makePackage("50000");
+    const second = await makePurchase(user.id, pkg2.id, new Date("2026-09-01T10:00:00.000Z"));
+
+    const firstResult = await prisma.$transaction((tx) => isDirectCommissionTriggerPurchase(first.id, tx));
+    const secondResult = await prisma.$transaction((tx) => isDirectCommissionTriggerPurchase(second.id, tx));
+
+    expect(firstResult).toBe(true);
+    expect(secondResult).toBe(false);
+  });
+
+  it("resolves deterministically when two purchases share the exact same instant", async () => {
+    const user = await makeUser();
+    await fundWalletB(user.id, "2000");
+    const pkg1 = await makePackage("1000");
+    const pkg2 = await makePackage("1000");
+    const sameInstant = new Date("2026-08-01T10:00:00.000Z");
+
+    const investmentA = await makePurchase(user.id, pkg1.id, sameInstant);
+    const investmentB = await makePurchase(user.id, pkg2.id, sameInstant);
+
+    const resultA = await prisma.$transaction((tx) => isDirectCommissionTriggerPurchase(investmentA.id, tx));
+    const resultB = await prisma.$transaction((tx) => isDirectCommissionTriggerPurchase(investmentB.id, tx));
+
+    // Exactly one must be the trigger, never both, never neither.
+    expect([resultA, resultB].filter(Boolean)).toHaveLength(1);
+
+    // Re-running gives the same answer every time (no nondeterministic flip).
+    const resultAAgain = await prisma.$transaction((tx) => isDirectCommissionTriggerPurchase(investmentA.id, tx));
+    const resultBAgain = await prisma.$transaction((tx) => isDirectCommissionTriggerPurchase(investmentB.id, tx));
+    expect(resultAAgain).toBe(resultA);
+    expect(resultBAgain).toBe(resultB);
+  });
+
+  it("throws for an investment id that does not exist", async () => {
+    await expect(
+      prisma.$transaction((tx) => isDirectCommissionTriggerPurchase("nonexistent-id", tx)),
+    ).rejects.toThrow();
+  });
+});
+
 describe("payDirectCommission", () => {
-  it("splits a purchase 5%/3% into the sponsor's C and SAVING wallets, with a matching saving_lot", async () => {
+  it("splits a qualifying first purchase 5%/3% into the sponsor's C and SAVING wallets, with a matching saving_lot", async () => {
     const sponsor = await makeUser();
     const buyer = await makeSponsoredUser(sponsor.id);
     await fundWalletB(buyer.id, "10000");
@@ -154,7 +220,7 @@ describe("payDirectCommission", () => {
     expect(entries).toHaveLength(0);
   });
 
-  it("pays commission on a SECOND purchase by the same buyer too, not just the first (2026-09-24 rule change: every purchase counts)", async () => {
+  it("does nothing for a non-first purchase, regardless of amount", async () => {
     const sponsor = await makeUser();
     const buyer = await makeSponsoredUser(sponsor.id);
     await fundWalletB(buyer.id, "60000");
@@ -168,34 +234,17 @@ describe("payDirectCommission", () => {
     await payDirectCommission(second.id, new Date("2026-09-01T10:00:00.000Z"));
 
     const secondEntries = await prisma.ledgerEntry.findMany({
-      where: {
-        referenceType: "investment",
-        referenceId: second.id,
-        entryType: { in: ["DIRECT_COMMISSION", "DIRECT_SAVING"] },
-      },
+      where: { idempotencyKey: `direct:${second.id}` },
     });
-    expect(secondEntries).toHaveLength(4);
-    const secondCommissionCredit = secondEntries.find(
-      (e) => e.entryType === "DIRECT_COMMISSION" && e.direction === "CREDIT",
-    )!;
-    const secondSavingCredit = secondEntries.find(
-      (e) => e.entryType === "DIRECT_SAVING" && e.direction === "CREDIT",
-    )!;
-    // 5%/3% of 50000 = 2500/1500, on top of the first purchase's 50/30 (5%/3% of 1000).
-    expect(new Prisma.Decimal(secondCommissionCredit.amount).eq("2500")).toBe(true);
-    expect(new Prisma.Decimal(secondSavingCredit.amount).eq("1500")).toBe(true);
+    expect(secondEntries).toHaveLength(0);
 
-    // Two purchases -> two saving_lot rows, one per triggering investment.
-    const lots = await prisma.savingLot.findMany({ where: { userId: sponsor.id }, orderBy: { createdAt: "asc" } });
-    expect(lots).toHaveLength(2);
-    expect(lots[0].sourceInvestmentId).toBe(first.id);
-    expect(lots[1].sourceInvestmentId).toBe(second.id);
+    const lots = await prisma.savingLot.findMany({ where: { userId: sponsor.id } });
+    expect(lots).toHaveLength(1);
 
     const sponsorC = await prisma.walletAccount.findUniqueOrThrow({
       where: { userId_type: { userId: sponsor.id, type: "C" } },
     });
-    // 50 (from the 1000 purchase) + 2500 (from the 50000 purchase) = 2550.
-    expect(new Prisma.Decimal(sponsorC.balance).eq("2550")).toBe(true);
+    expect(new Prisma.Decimal(sponsorC.balance).eq("50")).toBe(true);
   });
 
   it("blocks the commission when the sponsor is suspended", async () => {

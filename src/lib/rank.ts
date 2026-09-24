@@ -35,14 +35,11 @@ export function dubaiMonthKey(forDate: Date): string {
  * placement-tree rollup.
  *
  * Every purchase counts — new purchases AND reinvestments alike, no
- * first-purchase-only gate. (Direct Commission, payDirectCommissionInTx in
- * direct-commission.ts, also pays on every purchase as of 2026-09-24 —
- * previously it was first-purchase-only and this comment noted the two
- * systems as deliberately different; they now use the same "every
- * purchase" trigger, though MRV and Direct Commission remain otherwise
- * independent systems with separate accounting.) A buyer with no sponsor
- * (a root user) accrues nothing for anyone, including themselves — MRV
- * only ever credits a direct sponsor, never a self-credit.
+ * first-purchase-only gate (deliberately different from Direct Commission's
+ * isDirectCommissionTriggerPurchase, see that function's own doc comment).
+ * A buyer with no sponsor (a root user) accrues nothing for anyone,
+ * including themselves — MRV only ever credits a direct sponsor, never a
+ * self-credit.
  *
  * `tx` is required, not optional (matches rollupBvForPurchase's and
  * payDirectCommissionInTx's reasoning): must run inside the same

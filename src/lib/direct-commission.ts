@@ -2,6 +2,49 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { postTransaction } from "./ledger-transaction";
 
+/**
+ * Whether `investmentId` is the buyer's genuinely first-ever investment, by
+ * purchase order — the sole trigger condition for Phase 6's Direct
+ * Commission. Deliberately NOT named `isFirstPurchase`: Phase 9's MRV engine
+ * also deals with "purchases by a user", but counts every purchase (no
+ * first-only restriction) at one level of sponsor depth — a different
+ * trigger for a different purpose (see docs/mlm_rules_log.md Section 6 and
+ * docs/phases/phase-06-direct-commission.md). Never reuse this function, or
+ * generalize it into something both systems share — that would silently
+ * couple two rules the spec keeps intentionally independent.
+ *
+ * Order is determined by `purchasedAt`, tie-broken by `createdAt` (real DB
+ * insertion order), tie-broken again by `id` (cuids are unique) — so two
+ * investments sharing the exact same `purchasedAt` instant (e.g. fabricated
+ * or backfilled dates, or a rare same-millisecond concurrent insert) still
+ * resolve to exactly one deterministic "first" investment, not an ambiguous
+ * or flip-flopping result across repeated calls.
+ *
+ * `tx` is required, not optional: the caller MUST run this inside the same
+ * DB transaction as the resulting commission payout. Two concurrent first
+ * purchases by the same user must not both read "I am first" — that
+ * consistency only holds if this read and the payout it gates commit
+ * atomically together. A convenience default to a bare `prisma` client would
+ * silently reintroduce that race.
+ */
+export async function isDirectCommissionTriggerPurchase(
+  investmentId: string,
+  tx: Prisma.TransactionClient,
+): Promise<boolean> {
+  const target = await tx.investment.findUniqueOrThrow({
+    where: { id: investmentId },
+    select: { id: true, userId: true },
+  });
+
+  const earliest = await tx.investment.findFirstOrThrow({
+    where: { userId: target.userId },
+    orderBy: [{ purchasedAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+    select: { id: true },
+  });
+
+  return earliest.id === target.id;
+}
+
 function addMonths(date: Date, months: number) {
   const result = new Date(date);
   result.setUTCMonth(result.getUTCMonth() + months);
@@ -9,22 +52,17 @@ function addMonths(date: Date, months: number) {
 }
 
 /**
- * Pays Direct Commission on every qualifying purchase: 5% (or the currently
- * configured split) to the direct sponsor's Wallet C, immediately available,
- * and 3% (or the currently configured split) to the sponsor's SAVING wallet,
- * locked in a new `saving_lot` for 3 months. One level only — no propagation
- * past the direct sponsor, per docs/mlm_rules_log.md Section 4.
- *
- * Changed 2026-09-24: previously gated to the buyer's first-ever purchase
- * only (via a now-removed `isDirectCommissionTriggerPurchase` check); now
- * pays on every purchase, including reinvestments. Deliberate business-rule
- * change, not a bug fix — confirmed with the project owner. Does NOT
- * retroactively pay commission for purchases made before this change; only
- * purchases processed from this point forward trigger it (no backfill).
+ * Pays Direct Commission on a qualifying first purchase: 5% (or the
+ * currently configured split) to the direct sponsor's Wallet C, immediately
+ * available, and 3% (or the currently configured split) to the sponsor's
+ * SAVING wallet, locked in a new `saving_lot` for 3 months. One level only —
+ * no propagation past the direct sponsor, per docs/mlm_rules_log.md Section 4.
  *
  * A no-op (not an error) in every case where no commission is owed: the
- * buyer has no sponsor, or either party is suspended. These are all
- * ordinary outcomes — not failure conditions.
+ * purchase isn't the buyer's first (checked via
+ * isDirectCommissionTriggerPurchase — never re-derived here), the buyer has
+ * no sponsor, or either party is suspended. These are all ordinary outcomes
+ * — most purchases in the system are exactly this — not failure conditions.
  *
  * Direct Commission is new money materializing for the sponsor, not a
  * transfer out of the buyer's own balance (the buyer already paid full price
@@ -72,6 +110,11 @@ export async function payDirectCommissionInTx(
     where: { id: investmentId },
     select: { id: true, userId: true, amount: true },
   });
+
+  const isTrigger = await isDirectCommissionTriggerPurchase(investmentId, tx);
+  if (!isTrigger) {
+    return;
+  }
 
   const buyer = await tx.user.findUniqueOrThrow({ where: { id: investment.userId } });
   if (!buyer.sponsorId) {

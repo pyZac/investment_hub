@@ -95,12 +95,11 @@ async function findFirstOpenSlot(
  * the sponsor's own node, spilling into whichever leg has less accumulated
  * BV (weakerLeg), then finding the first open slot down that leg specifically.
  *
- * `tx` is required, not optional (same reasoning as any read-then-write
- * pair guarding a per-user invariant): this must run inside the same
- * transaction as the new user's creation, both so a crash leaves no
- * orphaned half-registered user and so two concurrent registrations under
- * the same sponsor read/write consistent tree state rather than racing on
- * "first open slot" independently.
+ * `tx` is required, not optional (matches isDirectCommissionTriggerPurchase's
+ * reasoning): this must run inside the same transaction as the new user's
+ * creation, both so a crash leaves no orphaned half-registered user and so
+ * two concurrent registrations under the same sponsor read/write consistent
+ * tree state rather than racing on "first open slot" independently.
  */
 export async function placeInBinaryTree(
   sponsorId: string,
