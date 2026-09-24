@@ -30,6 +30,7 @@ enum AdminPermission {
   JOB_MONITOR
   SOLVENCY_VIEW
   SECURITY_VIEW
+  DEVELOPER_TOOLS
 }
 
 enum AdminActionType {
@@ -53,6 +54,7 @@ enum AdminActionType {
   SUBADMIN_DEACTIVATED
   SUBADMIN_REACTIVATED
   MARKETER_STATUS_CHANGED
+  FRIDAY_GATE_BYPASS_TOGGLED
 }
 
 enum SecurityEventType {
@@ -133,6 +135,8 @@ model User {
   commissionConfigsSet CommissionConfig[]
 
   rankConfigsSet RankConfig[]
+
+  developerToolsSettingsUpdated DeveloperToolsSetting[]
 
   @@map("users")
 }
@@ -482,6 +486,27 @@ model CommissionConfig {
   // work; NULL is never equal to NULL even in a partial index). NOT declared
   // as @@unique here for the same reason as InterestRateConfig.
   @@map("commission_config")
+}
+
+// Deliberately NOT versioned/append-only like InterestRateConfig/
+// CommissionConfig above — this is mutable operational testing state (a
+// bypass toggle), not a financial rate with a meaningful history to
+// preserve. A true singleton, enforced by always reading/writing the one
+// row seeded with a fixed id ("singleton") rather than a partial-unique
+// -index trick — there is exactly one row, ever, updated in place.
+model DeveloperToolsSetting {
+  id String @id
+
+  bypassFridayGate Boolean @default(false) @map("bypass_friday_gate")
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Nullable: the seeded singleton row has no admin behind its initial
+  // (false) value, same reasoning as CommissionConfig.setByAdminId.
+  updatedByAdminId String? @map("updated_by_admin_id")
+  updatedByAdmin   User?   @relation(fields: [updatedByAdminId], references: [id])
+
+  @@map("developer_tools_settings")
 }
 
 enum RankRewardType {

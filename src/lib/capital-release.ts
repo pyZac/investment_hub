@@ -37,7 +37,7 @@ export class CapitalAlreadyReleasedError extends Error {
  * happens to filter it out.
  */
 export async function releaseCapital(userId: string, investmentId: string, forDate: Date) {
-  assertFriday(forDate);
+  await assertFriday(forDate);
 
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
   if (user.suspendedAt !== null) {

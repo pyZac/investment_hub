@@ -664,6 +664,7 @@
     "permission_MANUAL_ADJUSTMENT": "Manual Adjustment",
     "permission_JOB_MONITOR": "Job Monitor",
     "permission_SOLVENCY_VIEW": "Solvency View",
+    "permission_DEVELOPER_TOOLS": "Developer Tools",
 
     "actionType_SUBADMIN_CREATED": "Sub-Admin Created",
     "actionType_SUBADMIN_PERMISSIONS_UPDATED": "Permissions Updated",
@@ -1208,7 +1209,8 @@
     "solvency": "الملاءة المالية",
     "ledger": "السجل",
     "securityEvents": "الأحداث الأمنية",
-    "settings": "الإعدادات"
+    "settings": "الإعدادات",
+    "developerTools": "أدوات المطورين"
   },
   "AdminJobMonitor": {
     "pageTitle": "مراقبة المهام",
@@ -1226,6 +1228,7 @@
     "jobBinaryCycle": "Binary Cycle",
     "jobRankEvaluation": "Rank Evaluation",
     "jobRankPayout": "Rank Payout",
+    "jobReconciliation": "Reconciliation",
 
     "status_RUNNING": "قيد التشغيل",
     "status_COMPLETED": "سليمة",
@@ -1237,9 +1240,41 @@
 
     "triggerNow": "تشغيل الآن",
     "triggering": "جارٍ التشغيل…",
+    "cancel": "إلغاء",
+    "confirmTriggerTitle": "تشغيل هذه المهمة الآن؟",
+    "confirmTriggerDescription": "سيؤدي هذا إلى تشغيل دالة اللحاق الفعلية لمهمة {job} فورًا، وهي نفس الدالة التي تستدعيها الجدولة. تعالج فقط الفترات التي لم تكتمل بعد — آمنة للتشغيل حتى لو نجحت الدورة المجدولة لليوم بالفعل.",
+    "confirmTriggerSubmit": "تشغيل الآن",
 
     "errorUnknownJob": "نوع مهمة غير معروف.",
     "errorForbidden": "لا تملك صلاحية تنفيذ هذا الإجراء.",
+    "errorGeneric": "حدث خطأ ما. الرجاء المحاولة مرة أخرى."
+  },
+  "AdminDeveloperTools": {
+    "pageTitle": "أدوات المطورين",
+    "pageDescription": "أدوات تحكم يدوية لاختبار سلامة الإنتاج — تشغيل مهام الخلفية عند الطلب وتجاوز البوابات المرتبطة بالوقت. كل إجراء هنا مُسجَّل ومنسوب إلى من قام به.",
+
+    "bypassHeading": "بوابة السحب يوم الجمعة",
+    "bypassDescription": "للاختبار فقط — يتجاوز قيد \"الجمعة فقط\" على تحويل الأرباح A→B، وتحرير رأس المال، وتقديم طلب سحب من Wallet B.",
+    "bypassWarningLabel": "للاختبار فقط",
+    "bypassWarningBody": "أثناء تفعيل هذا الخيار، ستعمل الإجراءات المرتبطة بالسحب التي تعمل عادة يوم الجمعة فقط (بتوقيت دبي) في أي يوم، لكل مستخدم على هذه المنصة — وليس فقط لأغراض الاختبار. أوقفه فور الانتهاء.",
+    "bypassStatusOn": "التجاوز مفعّل",
+    "bypassStatusOff": "التجاوز متوقف",
+    "bypassTurnOn": "تفعيل",
+    "bypassTurnOff": "إيقاف",
+    "bypassSubmitting": "جارٍ الحفظ…",
+    "bypassLastChangedBy": "آخر تغيير بواسطة {name} في {date}.",
+    "bypassNeverChanged": "لم يتغير عن الإعداد الافتراضي.",
+    "confirmTurnOnTitle": "تفعيل تجاوز يوم الجمعة؟",
+    "confirmTurnOnDescription": "سيتمكن كل مستخدم من تقديم تحويلات A→B وتحرير رأس المال وطلبات سحب Wallet B في أي يوم، وليس فقط يوم الجمعة، حتى يتم إيقافه مرة أخرى. استخدمه فقط لاختبار سلامة الإنتاج.",
+    "confirmTurnOffTitle": "إيقاف تجاوز يوم الجمعة؟",
+    "confirmTurnOffDescription": "ستعود الإجراءات المرتبطة بالسحب إلى يوم الجمعة فقط (بتوقيت دبي) لكل مستخدم.",
+    "cancel": "إلغاء",
+
+    "jobsHeading": "مهام الخلفية",
+    "jobsDescription": "إعادة تشغيل دالة اللحاق الفعلية لأي مهمة مجدولة يدويًا — وهي نفس الدالة التي تستدعيها الجدولة.",
+
+    "errorForbidden": "لا تملك صلاحية تنفيذ هذا الإجراء.",
+    "errorUnknownJob": "نوع مهمة غير معروف.",
     "errorGeneric": "حدث خطأ ما. الرجاء المحاولة مرة أخرى."
   },
   "AdminSolvency": {

@@ -664,6 +664,7 @@
     "permission_MANUAL_ADJUSTMENT": "Manual Adjustment",
     "permission_JOB_MONITOR": "Job Monitor",
     "permission_SOLVENCY_VIEW": "Solvency View",
+    "permission_DEVELOPER_TOOLS": "Developer Tools",
 
     "actionType_SUBADMIN_CREATED": "Sub-Admin Created",
     "actionType_SUBADMIN_PERMISSIONS_UPDATED": "Permissions Updated",
@@ -1208,7 +1209,8 @@
     "solvency": "Solvency",
     "ledger": "Ledger",
     "securityEvents": "Security Events",
-    "settings": "Settings"
+    "settings": "Settings",
+    "developerTools": "Developer Tools"
   },
   "AdminJobMonitor": {
     "pageTitle": "Job Monitor",
@@ -1226,6 +1228,7 @@
     "jobBinaryCycle": "Binary Cycle",
     "jobRankEvaluation": "Rank Evaluation",
     "jobRankPayout": "Rank Payout",
+    "jobReconciliation": "Reconciliation",
 
     "status_RUNNING": "Running",
     "status_COMPLETED": "Healthy",
@@ -1237,9 +1240,41 @@
 
     "triggerNow": "Trigger now",
     "triggering": "Triggering…",
+    "cancel": "Cancel",
+    "confirmTriggerTitle": "Trigger this job now?",
+    "confirmTriggerDescription": "This runs {job}'s real catch-up function immediately, the same one the scheduler calls. It only processes periods that have not already completed — safe to run even if today's scheduled run already succeeded.",
+    "confirmTriggerSubmit": "Trigger now",
 
     "errorUnknownJob": "Unknown job type.",
     "errorForbidden": "You do not have permission to perform this action.",
+    "errorGeneric": "Something went wrong. Please try again."
+  },
+  "AdminDeveloperTools": {
+    "pageTitle": "Developer Tools",
+    "pageDescription": "Manual controls for production health testing — trigger background jobs on demand and bypass time-based gates. Every action here is logged and attributable.",
+
+    "bypassHeading": "Friday withdrawal gate",
+    "bypassDescription": "Testing only — bypasses the Friday-only restriction on the A→B profit transfer, capital release, and Wallet B exit request submission.",
+    "bypassWarningLabel": "Testing only",
+    "bypassWarningBody": "While this is on, withdrawal-related actions that normally only work on Fridays (Asia/Dubai) will work on any day, for every user on this platform — not just for testing. Turn it off as soon as you're done.",
+    "bypassStatusOn": "Bypass ON",
+    "bypassStatusOff": "Bypass OFF",
+    "bypassTurnOn": "Turn on",
+    "bypassTurnOff": "Turn off",
+    "bypassSubmitting": "Saving…",
+    "bypassLastChangedBy": "Last changed by {name} on {date}.",
+    "bypassNeverChanged": "Never changed from its default.",
+    "confirmTurnOnTitle": "Turn on the Friday bypass?",
+    "confirmTurnOnDescription": "Every user will be able to submit A→B transfers, capital releases, and Wallet B exit requests on any day, not just Fridays, until this is turned off again. Use only for production health testing.",
+    "confirmTurnOffTitle": "Turn off the Friday bypass?",
+    "confirmTurnOffDescription": "Withdrawal-related actions will go back to Fridays-only (Asia/Dubai) for every user.",
+    "cancel": "Cancel",
+
+    "jobsHeading": "Background jobs",
+    "jobsDescription": "Manually re-trigger any scheduled job's real catch-up function — the same one the scheduler calls.",
+
+    "errorForbidden": "You do not have permission to perform this action.",
+    "errorUnknownJob": "Unknown job type.",
     "errorGeneric": "Something went wrong. Please try again."
   },
   "AdminSolvency": {

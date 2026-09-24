@@ -12,14 +12,22 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { JobStatusTable, JOB_TYPE_LABEL_KEYS, type JobStatusRow } from "@/components/admin/job-status-table";
-import { listJobStatusesAction, triggerJobRunAction, type JobMonitorErrorKey } from "./actions";
+import { listJobStatusesAction, triggerJobRunAction, type DeveloperToolsErrorKey } from "./actions";
 
-export function JobStatusList({ initialJobs, locale }: { initialJobs: JobStatusRow[]; locale: string }) {
+/**
+ * Same trigger-with-confirmation flow as job-monitor's own JobStatusList,
+ * reachable from a second screen for production-health testing — see this
+ * ticket's own "Developer Tools" scope. Deliberately its own component (not
+ * job-monitor's JobStatusList imported directly) because it calls a
+ * different actions.ts file (DEVELOPER_TOOLS-gated, not JOB_MONITOR), even
+ * though the underlying lib functions and job list are identical.
+ */
+export function JobTriggerList({ initialJobs, locale }: { initialJobs: JobStatusRow[]; locale: string }) {
   const t = useTranslations("AdminJobMonitor");
   const [jobs, setJobs] = useState(initialJobs);
   const [confirmJobType, setConfirmJobType] = useState<string | null>(null);
   const [triggeringJobType, setTriggeringJobType] = useState<string | null>(null);
-  const [errorKey, setErrorKey] = useState<JobMonitorErrorKey | null>(null);
+  const [errorKey, setErrorKey] = useState<DeveloperToolsErrorKey | null>(null);
   const [, startTransition] = useTransition();
 
   function refresh() {

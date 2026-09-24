@@ -26,7 +26,7 @@ export class WithdrawalRequestNotPendingError extends Error {
  * until an admin decides it.
  */
 export async function submitWithdrawalRequest(userId: string, amount: Prisma.Decimal.Value, forDate: Date) {
-  assertFriday(forDate);
+  await assertFriday(forDate);
 
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
   if (user.suspendedAt !== null) {

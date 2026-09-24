@@ -73,6 +73,7 @@ export const ADMIN_ACTION_TYPE_LABELS: Record<AdminActionType, string> = {
   SUBADMIN_DEACTIVATED: "Sub-Admin Deactivated",
   SUBADMIN_REACTIVATED: "Sub-Admin Reactivated",
   MARKETER_STATUS_CHANGED: "Marketer Status Changed",
+  FRIDAY_GATE_BYPASS_TOGGLED: "Friday Gate Bypass Toggled",
 };
 
 export type SecurityLogSource = "SECURITY_EVENT" | "ADMIN_ACTION";

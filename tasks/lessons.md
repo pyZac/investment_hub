@@ -1811,3 +1811,68 @@ grep pattern first used). A fix to a widely-consumed rate function is not
 the same raw config field has been re-derived, not just the ones a first
 grep pass happens to catch — run the full suite as the actual completeness
 check, not the grep.
+
+## 2026-09-24 — post-phase (Developer Tools page: verifying the ticket's own premises)
+Note (not a mistake — a ticket whose factual premises needed correcting
+before building, worth recording since acting on them as-written would
+have shipped something broken or duplicated). The ticket asked to
+"bypass the isFriday() check in src/lib/transfers.ts" for "B wallet
+withdrawals." Investigation found this wrong on two independent counts:
+(1) `transfers.ts` doesn't call `isFriday()` at all — it calls
+`assertFriday()` from withdrawal-guard.ts, which is the real, single
+enforcement point, also called by capital-release.ts and
+withdrawal-requests.ts (3 real call sites total, not 1); (2) the ticket
+specifically framed this as gating C→B withdrawals, but `transferCtoB`
+already has `requiresFriday: false` in the shipped code (a deliberate
+earlier fix) — there was nothing to bypass there at all; the actual
+Friday-gated action nobody had named was A→B (`transferAtoB`, profit
+withdrawal). Separately, the ticket's step 1 (a job-trigger admin
+feature) turned out to already exist near-completely:
+`src/lib/job-monitor.ts` + `/admin/job-monitor` already had
+permission-gated, audit-logged manual job triggering calling the exact
+real catch-up functions — building the literal spec (a new
+`POST /api/admin/jobs/trigger` REST endpoint, a second parallel UI) would
+have duplicated working code and introduced this app's first-ever
+`/api/admin/*` REST route in an app where every other admin action goes
+through Server Actions exclusively (verified via `find src/app/api` —
+zero existing admin REST routes).
+Root-caused before writing any code by: reading the actual file the
+ticket named (`transfers.ts`) instead of trusting its description of what
+that file contains; grepping for the real call sites of the function it
+described bypassing; and checking whether the requested feature already
+existed elsewhere before assuming a fresh build was needed. Presented
+both corrections to the user with a recommended path (extend
+`assertFriday`/`job-monitor.ts` rather than duplicate) before writing any
+code, and got explicit confirmation on both scope questions (which 3 real
+Friday-gated actions the bypass should cover; reuse vs. duplicate the
+job-trigger UI) before implementing.
+Also worth recording as a completeness pattern (same shape as the
+interest-rate lesson above, different subsystem): adding one new
+`AdminPermission` enum value (`DEVELOPER_TOOLS`) required updating THREE
+separate hand-maintained lists beyond the schema itself, none mentioned
+in the original plan — `security-log.ts`'s exhaustive
+`Record<AdminActionType, string>` label map (a genuine `tsc` error, easy
+to catch), and two client components' hand-written `PERMISSION_CATALOG:
+AdminPermission[]` arrays in the sub-admin create/edit forms (NOT
+type-checked exhaustively — `tsc` stays silent if a new permission is
+just missing from a plain array, so this only surfaces by grepping for
+every existing permission's own list membership and checking the new one
+was added everywhere the others were, not by relying on the compiler to
+catch it).
+Rule: (1) when a ticket describes a specific file/function/mechanism as
+the site of a bug or the target of a change, verify that description
+against the actual file before writing any code around it — a plausible
+-sounding wrong premise (wrong file, wrong function, wrong wallet
+direction) can silently misdirect an entire implementation if taken on
+faith. (2) Before building a requested feature, check whether it already
+exists in some form — this project's admin panel has grown organically
+enough that "does X already exist" is a real, not rhetorical, question
+worth 10 minutes of grep before writing new code that duplicates it. (3)
+Adding a new enum value to a Prisma schema enum is not complete once
+`tsc` passes — some consuming lists are exhaustively type-checked
+(`Record<Enum, T>`, safe) and some are plain arrays a developer must
+remember to extend by hand (unsafe, `tsc`-silent) — grep for every other
+existing value's own reference sites before considering an enum addition
+finished, the same discipline already established for `AdminActionType`
+in the interest-rate lesson above, now confirmed to also apply to
+`AdminPermission`.

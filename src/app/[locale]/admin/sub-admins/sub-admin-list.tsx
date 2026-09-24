@@ -36,6 +36,7 @@ const PERMISSION_CATALOG: AdminPermission[] = [
   "MANUAL_ADJUSTMENT",
   "JOB_MONITOR",
   "SOLVENCY_VIEW",
+  "DEVELOPER_TOOLS",
 ];
 
 type SubAdminRow = {

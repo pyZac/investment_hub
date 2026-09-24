@@ -29,7 +29,7 @@ async function transfer(
   requiresFriday: boolean,
 ) {
   if (requiresFriday) {
-    assertFriday(forDate);
+    await assertFriday(forDate);
   }
 
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
