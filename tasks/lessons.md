@@ -1876,3 +1876,64 @@ existing value's own reference sites before considering an enum addition
 finished, the same discipline already established for `AdminActionType`
 in the interest-rate lesson above, now confirmed to also apply to
 `AdminPermission`.
+
+## 2026-09-27 — post-phase (Rank Evaluation "bug report" — both premises false)
+Note (not a mistake — another ticket built on inaccurate premises, same
+shape as the Developer Tools ticket above; recording because this is now
+the second time in a row a bug report's own diagnosis was wrong on
+investigation, worth treating as a pattern to actively check for, not
+just something that happened once). Reported as two bugs: (1) rank
+-evaluation cron missing from worker registration (explains "Never run"
+in job monitor); (2) after manually triggering it, a user with $27,000
+MRV (>= Investor's 25,000) and 2 qualified referrals (>= Investor's 2)
+still wasn't granted the rank — implying the evaluation logic itself was
+broken. Both were false: (1) `src/worker/index.ts` DOES register
+`rank_evaluation` at `"10 0 1 * *"` (00:10 Asia/Dubai, 1st of each
+month) — it showed "Never run" simply because that scheduled moment
+hadn't occurred yet since deploy, not because it's unregistered; (2)
+`runRankEvaluationCatchUp`'s `mostRecentCloseableMonth` deliberately
+evaluates ONLY the most recently completed calendar month (today's month
+minus one), by explicit, tested design (`rank-evaluation-job.test.ts`:
+"only processes the most recently closeable month, not a backward
+walk") — a month "isn't closeable... until it has fully ended"
+(mlm_rules_log.md Section 6: thresholds "must be achieved within the
+same calendar month"). Triggering the job on 2026-09-27 evaluates
+`2026-08` only; if the user's $27,000 MRV was earned in September (the
+in-progress month), an August-only evaluation correctly finds nothing to
+grant — not a bug, just the wrong month being looked at because the
+month hadn't ended yet. The rank grants itself automatically at 00:10 on
+October 1st once September becomes the closeable month.
+Root-caused by reading the actual catch-up wrapper
+(`rank-evaluation-job.ts`), not just the per-user engine function
+(`evaluateRankForUser` in `rank.ts`) the ticket pointed at — the bug (or,
+here, the non-bug) lived one layer up, in which month gets passed in, not
+in the qualification logic itself. Confirmed by tracing `dubaiMonthKey`
+for the actual report date and checking the existing test suite's own
+documented intent, rather than guessing at "why wouldn't this grant" from
+the qualification conditions alone. Could not confirm against the real
+production data (this dev DB has zero `mrv_periods`/`job_runs` rows
+matching the scenario — the report is about production, which I have no
+DB access to) — wrote a read-only diagnostic query file
+(`tasks/rank-evaluation-diagnostic.md`) for the user to run themselves
+rather than guessing the conclusion was certainly correct without any
+real-data confirmation path offered.
+Rule: (1) when a report says "X still isn't happening after I manually
+triggered the job," check what PERIOD/KEY the manual trigger actually
+processed before assuming the qualification logic itself is broken — a
+catch-up-style job's "which period does this call cover" logic is a
+separate, independently-buggable layer from "does this user meet the
+threshold for that period," and a wrong-period bug produces the exact
+same symptom (rank not granted) as a wrong-threshold bug would. (2) This
+is the second consecutive ticket (see the Developer Tools entry
+immediately above) whose own stated root-cause diagnosis didn't survive
+contact with the actual code — treat "here's what's likely wrong" in a
+bug report as a hypothesis to verify against the real files, never as a
+given fact to build a fix around, even when the report is detailed and
+specific-sounding (exact dollar figures, exact referral counts). (3) When
+a root-cause finding can't be confirmed against real data because the
+report concerns production and only dev DB access exists, don't stop at
+"probably confirmed by the code" — hand the user a concrete, read-only
+verification path (exact queries, exact things to look for in the
+output) so the conclusion gets checked against real numbers before
+anyone closes the ticket as "working as intended," rather than trusting
+code-reading alone to settle a live-data question.
