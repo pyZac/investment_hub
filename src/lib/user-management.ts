@@ -25,13 +25,15 @@ async function assertHasUserManagementPermission(actingAdminId: string): Promise
  * Read-only user search is useful to more than one admin surface — the
  * USER_MANAGEMENT screen's own list, SCRUM-106's credit-issuance user
  * picker, SCRUM-111's manual-adjustment user picker (find a user, then
- * browse their ledger entries to pick one to reverse), and SCRUM-114's
- * ledger explorer user filter — a sub-admin may hold CREDIT_ISSUANCE,
- * MANUAL_ADJUSTMENT, or LEDGER_VIEW without also holding USER_MANAGEMENT.
- * Any one of the four grants is sufficient to search (never to see the
- * fuller getUserDetail surface below, which stays USER_MANAGEMENT-only —
- * wallet balances/investment/referral counts are a wider exposure than
- * "look up a user by name to pick as a target").
+ * browse their ledger entries to pick one to reverse), SCRUM-114's ledger
+ * explorer user filter, and the Developer Tools "Simulate Daily Interest"
+ * user-search-then-pick-an-investment flow — a sub-admin may hold
+ * CREDIT_ISSUANCE, MANUAL_ADJUSTMENT, LEDGER_VIEW, or DEVELOPER_TOOLS
+ * without also holding USER_MANAGEMENT. Any one of the five grants is
+ * sufficient to search (never to see the fuller getUserDetail surface
+ * below, which stays USER_MANAGEMENT-only — wallet balances/investment/
+ * referral counts are a wider exposure than "look up a user by name to
+ * pick as a target").
  */
 async function assertHasUserManagementOrCreditIssuancePermission(actingAdminId: string): Promise<void> {
   const admin = await prisma.user.findUnique({ where: { id: actingAdminId } });
@@ -44,12 +46,14 @@ async function assertHasUserManagementOrCreditIssuancePermission(actingAdminId: 
   const grant = await prisma.adminPermissionGrant.findFirst({
     where: {
       adminUserId: actingAdminId,
-      permission: { in: ["USER_MANAGEMENT", "CREDIT_ISSUANCE", "MANUAL_ADJUSTMENT", "LEDGER_VIEW", "SECURITY_VIEW"] },
+      permission: {
+        in: ["USER_MANAGEMENT", "CREDIT_ISSUANCE", "MANUAL_ADJUSTMENT", "LEDGER_VIEW", "SECURITY_VIEW", "DEVELOPER_TOOLS"],
+      },
     },
   });
   if (!grant) {
     throw new Error(
-      "Forbidden: missing USER_MANAGEMENT, CREDIT_ISSUANCE, MANUAL_ADJUSTMENT, LEDGER_VIEW, or SECURITY_VIEW permission.",
+      "Forbidden: missing USER_MANAGEMENT, CREDIT_ISSUANCE, MANUAL_ADJUSTMENT, LEDGER_VIEW, SECURITY_VIEW, or DEVELOPER_TOOLS permission.",
     );
   }
 }

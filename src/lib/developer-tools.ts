@@ -121,6 +121,12 @@ export type SimulationInvestmentSummary = {
  * "confirm before you fire this" step — shows the admin exactly whose
  * investment they're about to post real (if backdated) interest for,
  * before any ledger write happens. Read-only, DEVELOPER_TOOLS-gated.
+ *
+ * Called once an admin has picked one specific investment from the
+ * search-then-list flow (`listActiveInvestmentsForSimulation` below) —
+ * the investment id itself is never surfaced to or typed by the admin;
+ * it only ever travels as an internal id from a list-row click straight
+ * into this lookup and then into `simulateDailyInterestDays`.
  */
 export async function findInvestmentForSimulation(
   actingAdminId: string,
@@ -146,6 +152,54 @@ export async function findInvestmentForSimulation(
     purchasedAt: investment.purchasedAt,
     profitStartsAt: investment.profitStartsAt,
   };
+}
+
+export type SimulationInvestmentListRow = {
+  id: string;
+  packageName: string;
+  amount: Prisma.Decimal;
+  purchasedAt: Date;
+  status: "ACTIVE" | "CAPITAL_RELEASED";
+};
+
+/**
+ * A target user's ACTIVE investments, for the Developer Tools user-search
+ * -then-pick-an-investment flow's second step. Deliberately admin-facing
+ * (actingAdminId + targetUserId, permission-checked first, queries prisma
+ * directly) rather than reusing `listActiveInvestmentsForUser` in
+ * investments.ts — that function is explicitly self-service-only by its
+ * own doc comment ("ownership enforced by construction... no separate
+ * target-user param exists to view someone else's investments,
+ * invariant #9"); calling it with an admin-supplied target id would be
+ * exactly the IDOR bypass invariant #9 exists to prevent. Mirrors
+ * getUserDetail's shape in user-management.ts for the same reason.
+ *
+ * Scoped to ACTIVE only, not the user's full investment history — a
+ * CAPITAL_RELEASED investment can't usefully simulate interest on anyway
+ * (`accrueDailyInterestForInvestment` checks `investment.status` itself
+ * and immediately skips a released one for every simulated day), so
+ * listing it here would only offer a selection guaranteed to post zero
+ * entries.
+ */
+export async function listActiveInvestmentsForSimulation(
+  actingAdminId: string,
+  targetUserId: string,
+): Promise<SimulationInvestmentListRow[]> {
+  await assertHasDeveloperToolsPermission(actingAdminId);
+
+  const investments = await prisma.investment.findMany({
+    where: { userId: targetUserId, status: "ACTIVE" },
+    include: { package: { select: { name: true } } },
+    orderBy: { purchasedAt: "desc" },
+  });
+
+  return investments.map((investment) => ({
+    id: investment.id,
+    packageName: investment.package.name,
+    amount: investment.amount,
+    purchasedAt: investment.purchasedAt,
+    status: investment.status,
+  }));
 }
 
 export type SimulateDailyInterestResult = {

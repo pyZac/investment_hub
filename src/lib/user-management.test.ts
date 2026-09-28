@@ -210,6 +210,12 @@ describe("searchUsers", () => {
     expect(result).toHaveProperty("users");
   });
 
+  it("allows a sub-admin with only DEVELOPER_TOOLS (the Simulate Daily Interest user-search flow needs search without USER_MANAGEMENT)", async () => {
+    const subAdmin = await makeSubAdmin(["DEVELOPER_TOOLS"]);
+    const result = await searchUsers(subAdmin.id, {});
+    expect(result).toHaveProperty("users");
+  });
+
   it("rejects a non-admin caller", async () => {
     const user = await makePlainUser();
     await expect(searchUsers(user.id, {})).rejects.toThrow(/forbidden/i);

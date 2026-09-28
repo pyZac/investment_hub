@@ -8,10 +8,12 @@ import {
   listJobStatuses,
   triggerJobRun,
   findInvestmentForSimulation,
+  listActiveInvestmentsForSimulation,
   simulateDailyInterestDays,
   InvestmentNotFoundError,
   InvalidSimulationDaysError,
 } from "@/lib/developer-tools";
+import { searchUsers } from "@/lib/user-management";
 import { UnknownJobTypeError, type JobType } from "@/lib/job-monitor";
 import { toDisplay } from "@/lib/display";
 
@@ -126,6 +128,63 @@ export async function setFridayBypassAction(enabled: boolean, locale: string): P
   }
 }
 
+export type SimulationUserOption = { id: string; name: string; email: string };
+
+export type SearchUsersForSimulationResult =
+  | { ok: true; users: SimulationUserOption[] }
+  | { ok: false; errorKey: DeveloperToolsErrorKey };
+
+/**
+ * Step 1 of the "Simulate Daily Interest" user-search-then-pick-an
+ * -investment flow — never surfaces a raw investment id, only enough to
+ * pick a user by name/email. Calls requirePermission("DEVELOPER_TOOLS", ...)
+ * first (invariant #8) before searchUsers' own inline re-check, same
+ * defense-in-depth pattern as every other action on this page.
+ */
+export async function searchUsersForSimulationAction(query: string): Promise<SearchUsersForSimulationResult> {
+  try {
+    const actor = await requirePermission("DEVELOPER_TOOLS", new Date());
+    const result = await searchUsers(actor.id, { query });
+    return { ok: true, users: result.users.map((u) => ({ id: u.id, name: u.name, email: u.email })) };
+  } catch (err) {
+    return { ok: false, errorKey: mapError(err) };
+  }
+}
+
+export type SimulationInvestmentListRow = {
+  id: string;
+  packageName: string;
+  amount: string;
+  purchasedAt: string;
+  status: "ACTIVE" | "CAPITAL_RELEASED";
+};
+
+export type ListInvestmentsForSimulationResult =
+  | { ok: true; investments: SimulationInvestmentListRow[] }
+  | { ok: false; errorKey: DeveloperToolsErrorKey };
+
+/** Step 2: the selected user's ACTIVE investments to choose from. */
+export async function listActiveInvestmentsForSimulationAction(
+  userId: string,
+): Promise<ListInvestmentsForSimulationResult> {
+  try {
+    const actor = await requirePermission("DEVELOPER_TOOLS", new Date());
+    const investments = await listActiveInvestmentsForSimulation(actor.id, userId);
+    return {
+      ok: true,
+      investments: investments.map((i) => ({
+        id: i.id,
+        packageName: i.packageName,
+        amount: toDisplay(i.amount),
+        purchasedAt: i.purchasedAt.toISOString(),
+        status: i.status,
+      })),
+    };
+  } catch (err) {
+    return { ok: false, errorKey: mapError(err) };
+  }
+}
+
 export type SimulationInvestmentRow = {
   id: string;
   ownerName: string;
@@ -139,6 +198,8 @@ export type LookupInvestmentResult =
   | { ok: true; investment: SimulationInvestmentRow }
   | { ok: false; errorKey: DeveloperToolsErrorKey };
 
+/** Step 3: once a specific investment row is picked, get its full confirm
+ * -step summary (owner name/email, package, amount, status). */
 export async function lookupInvestmentForSimulationAction(investmentId: string): Promise<LookupInvestmentResult> {
   try {
     const actor = await requirePermission("DEVELOPER_TOOLS", new Date());

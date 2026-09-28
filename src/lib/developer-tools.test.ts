@@ -7,6 +7,7 @@ import {
   getFridayBypassStatus,
   setFridayBypass,
   findInvestmentForSimulation,
+  listActiveInvestmentsForSimulation,
   simulateDailyInterestDays,
   InvestmentNotFoundError,
   InvalidSimulationDaysError,
@@ -216,6 +217,59 @@ describe("findInvestmentForSimulation", () => {
     expect(summary.ownerEmail).toBe(user.email);
     expect(new Prisma.Decimal(summary.amount).eq("1000")).toBe(true);
     expect(summary.status).toBe("ACTIVE");
+  });
+});
+
+describe("listActiveInvestmentsForSimulation", () => {
+  it("rejects a sub-admin without DEVELOPER_TOOLS", async () => {
+    const subAdmin = await makeSubAdmin();
+    const user = await makeUser();
+    await makeInvestment(user.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
+
+    await expect(listActiveInvestmentsForSimulation(subAdmin.id, user.id)).rejects.toThrow(/forbidden/i);
+  });
+
+  it("returns only the target user's ACTIVE investments, newest first", async () => {
+    const mainAdmin = await getMainAdmin();
+    const user = await makeUser();
+    const older = await makeInvestment(user.id, "1000", new Date("2026-08-01T00:00:00.000Z"));
+    const newer = await makeInvestment(user.id, "2000", new Date("2026-08-10T00:00:00.000Z"));
+
+    const rows = await listActiveInvestmentsForSimulation(mainAdmin.id, user.id);
+    expect(rows.map((r) => r.id)).toEqual([newer.id, older.id]);
+    expect(rows.every((r) => r.status === "ACTIVE")).toBe(true);
+  });
+
+  it("excludes a CAPITAL_RELEASED investment", async () => {
+    const mainAdmin = await getMainAdmin();
+    const user = await makeUser();
+    const active = await makeInvestment(user.id, "1000", new Date("2026-08-01T00:00:00.000Z"));
+    const released = await makeInvestment(user.id, "500", new Date("2026-08-05T00:00:00.000Z"));
+    await prisma.investment.update({
+      where: { id: released.id },
+      data: { status: "CAPITAL_RELEASED", capitalReleasedAt: new Date("2026-09-01T00:00:00.000Z") },
+    });
+
+    const rows = await listActiveInvestmentsForSimulation(mainAdmin.id, user.id);
+    expect(rows.map((r) => r.id)).toEqual([active.id]);
+  });
+
+  it("never includes another user's investments", async () => {
+    const mainAdmin = await getMainAdmin();
+    const targetUser = await makeUser();
+    const otherUser = await makeUser();
+    await makeInvestment(otherUser.id, "1000", new Date("2026-08-01T00:00:00.000Z"));
+
+    const rows = await listActiveInvestmentsForSimulation(mainAdmin.id, targetUser.id);
+    expect(rows).toEqual([]);
+  });
+
+  it("returns an empty array for a user with no investments at all", async () => {
+    const mainAdmin = await getMainAdmin();
+    const user = await makeUser();
+
+    const rows = await listActiveInvestmentsForSimulation(mainAdmin.id, user.id);
+    expect(rows).toEqual([]);
   });
 });
 

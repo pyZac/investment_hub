@@ -2023,3 +2023,41 @@ check whether real calendar time has simply caught up to its hardcoded
 dates before assuming a real regression — and flag it explicitly as a
 ticking-clock design issue for these specific files, not just a flaky
 test to retry.
+
+## 2026-09-28 — post-phase (Developer Tools: user-search flow for Simulate Daily Interest)
+Note (not a mistake — a real invariant-#9 check that changed the
+implementation, worth recording as a reusable pattern). Replacing the raw
+investment-ID input with a "search user -> pick from their investments"
+flow needed a way to list a specific user's ACTIVE investments from an
+admin screen. `listActiveInvestmentsForUser` already existed in
+investments.ts — but its OWN doc comment says it's self-service-only
+("ownership enforced by construction... no separate target-user param
+exists to view someone else's investments, invariant #9"). Calling it
+with an admin-supplied target user id would have been exactly the IDOR
+bypass invariant #9 exists to prevent, even though the query shape is
+identical to what the admin screen needed. Wrote a separate,
+admin-facing `listActiveInvestmentsForSimulation(actingAdminId,
+targetUserId)` in developer-tools.ts instead — permission-checked first,
+queries prisma directly — mirroring `getUserDetail`'s established shape
+in user-management.ts for exactly this "admin looking up someone else's
+data" case, rather than reusing or parameterizing the self-service
+function.
+Separately, `searchUsers` (also user-management.ts) is gated by an
+inline allow-list of 5 permissions (USER_MANAGEMENT, CREDIT_ISSUANCE,
+MANUAL_ADJUSTMENT, LEDGER_VIEW, SECURITY_VIEW) — DEVELOPER_TOOLS wasn't
+in it, so a sub-admin holding only DEVELOPER_TOOLS couldn't have searched
+users at all. Extended the allow-list to include it, following the
+function's own documented reasoning verbatim ("any one of these grants
+is sufficient to search") rather than writing a second, duplicate search
+function just to avoid touching an existing permission list.
+Rule: when a UI-only-sounding ticket ("replace this input with a search
+box") needs a new admin-facing data lookup, check FIRST whether a
+same-shaped function already exists — and if it does, read its own doc
+comment for whether it's self-service-scoped (a param-less "the caller's
+own data" contract) before reusing it with an admin-supplied target id.
+A function's query logic being identical to what's needed is not the
+same as it being safe to call with someone else's id; the presence or
+absence of a target-user parameter in an existing function's signature is
+itself a security contract, not just an implementation detail, and
+skipping this check would have silently reintroduced exactly the
+class of bug invariant #9 exists to name and prevent.
