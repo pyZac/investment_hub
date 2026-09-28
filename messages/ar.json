@@ -1296,6 +1296,7 @@
     "summaryDaysProcessed": "الأيام المعالجة",
     "summaryEntriesPosted": "القيود المنشورة",
     "summaryTotalCredited": "إجمالي المبلغ المُضاف",
+    "summarySimulatedRange": "النطاق المحاكى",
 
     "errorForbidden": "لا تملك صلاحية تنفيذ هذا الإجراء.",
     "errorUnknownJob": "نوع مهمة غير معروف.",

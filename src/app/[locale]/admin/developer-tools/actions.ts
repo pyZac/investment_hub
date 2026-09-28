@@ -224,6 +224,8 @@ export type SimulateDailyInterestRow = {
   daysProcessed: number;
   entriesPosted: number;
   totalCredited: string;
+  simulatedFrom: string;
+  simulatedTo: string;
 };
 
 export type SimulateDailyInterestResult =
@@ -247,7 +249,7 @@ export async function simulateDailyInterestAction(
 ): Promise<SimulateDailyInterestResult> {
   try {
     const actor = await requirePermission("DEVELOPER_TOOLS", new Date());
-    const summary = await simulateDailyInterestDays(actor.id, investmentId, days, new Date());
+    const summary = await simulateDailyInterestDays(actor.id, investmentId, days);
     revalidatePath(`/${locale}/admin/developer-tools`);
     return {
       ok: true,
@@ -255,6 +257,8 @@ export async function simulateDailyInterestAction(
         daysProcessed: summary.daysProcessed,
         entriesPosted: summary.entriesPosted,
         totalCredited: toDisplay(summary.totalCredited),
+        simulatedFrom: summary.simulatedFrom.toISOString().slice(0, 10),
+        simulatedTo: summary.simulatedTo.toISOString().slice(0, 10),
       },
     };
   } catch (err) {

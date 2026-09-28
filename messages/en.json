@@ -1296,6 +1296,7 @@
     "summaryDaysProcessed": "Days processed",
     "summaryEntriesPosted": "Entries posted",
     "summaryTotalCredited": "Total credited",
+    "summarySimulatedRange": "Simulated range",
 
     "errorForbidden": "You do not have permission to perform this action.",
     "errorUnknownJob": "Unknown job type.",

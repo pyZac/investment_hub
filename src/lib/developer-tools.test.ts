@@ -13,6 +13,7 @@ import {
   InvalidSimulationDaysError,
 } from "./developer-tools";
 import { DEVELOPER_TOOLS_SETTINGS_ID } from "./developer-tools-constants";
+import { accrueDailyInterestForInvestment } from "./daily-interest";
 
 const createdUserIds: string[] = [];
 const createdPackageIds: string[] = [];
@@ -279,50 +280,47 @@ describe("simulateDailyInterestDays", () => {
     const user = await makeUser();
     const investment = await makeInvestment(user.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
 
-    await expect(
-      simulateDailyInterestDays(subAdmin.id, investment.id, 3, new Date("2026-08-30T10:00:00.000Z")),
-    ).rejects.toThrow(/forbidden/i);
+    await expect(simulateDailyInterestDays(subAdmin.id, investment.id, 3)).rejects.toThrow(/forbidden/i);
   });
 
   it("rejects days outside [1, 30]", async () => {
     const mainAdmin = await getMainAdmin();
     const user = await makeUser();
     const investment = await makeInvestment(user.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
-    const today = new Date("2026-08-30T10:00:00.000Z");
 
-    await expect(simulateDailyInterestDays(mainAdmin.id, investment.id, 0, today)).rejects.toThrow(
+    await expect(simulateDailyInterestDays(mainAdmin.id, investment.id, 0)).rejects.toThrow(
       InvalidSimulationDaysError,
     );
-    await expect(simulateDailyInterestDays(mainAdmin.id, investment.id, 31, today)).rejects.toThrow(
+    await expect(simulateDailyInterestDays(mainAdmin.id, investment.id, 31)).rejects.toThrow(
       InvalidSimulationDaysError,
     );
-    await expect(simulateDailyInterestDays(mainAdmin.id, investment.id, 2.5, today)).rejects.toThrow(
+    await expect(simulateDailyInterestDays(mainAdmin.id, investment.id, 2.5)).rejects.toThrow(
       InvalidSimulationDaysError,
     );
   });
 
   it("throws InvestmentNotFoundError for a nonexistent id", async () => {
     const mainAdmin = await getMainAdmin();
-    await expect(
-      simulateDailyInterestDays(mainAdmin.id, "nonexistent-id", 3, new Date("2026-08-30T10:00:00.000Z")),
-    ).rejects.toThrow(InvestmentNotFoundError);
+    await expect(simulateDailyInterestDays(mainAdmin.id, "nonexistent-id", 3)).rejects.toThrow(
+      InvestmentNotFoundError,
+    );
   });
 
-  it("posts one ledger entry per non-Friday, non-before-profit-start day, oldest date first, compounding correctly", async () => {
+  it("with no prior DAILY_INTEREST entries, starts the day after the 7-day wait ends (purchasedAt + 8 days), posts one entry per non-Friday day, compounding correctly", async () => {
     const mainAdmin = await getMainAdmin();
     const user = await makeUser();
-    // purchased 2026-08-13 -> profitStartsAt 2026-08-20.
+    // purchased 2026-08-13 (Thursday) -> start date 2026-08-21 (Friday, skipped),
+    // so days=5 simulates 08-21 (Fri, skipped), 08-22 (Sat), 08-23 (Sun),
+    // 08-24 (Mon), 08-25 (Tue) — 4 real accrual days out of 5 requested.
     const investment = await makeInvestment(user.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
 
-    // "today" = 2026-08-24 (Monday), days=5 -> simulated dates 08-20 (Thu),
-    // 08-21 (Fri, skipped), 08-22 (Sat), 08-23 (Sun), 08-24 (Mon) — 4 real
-    // accrual days out of 5 requested.
-    const today = new Date("2026-08-24T10:00:00.000Z");
-    const summary = await simulateDailyInterestDays(mainAdmin.id, investment.id, 5, today);
+    const summary = await simulateDailyInterestDays(mainAdmin.id, investment.id, 5);
 
     expect(summary.daysProcessed).toBe(5);
     expect(summary.entriesPosted).toBe(4);
     expect(summary.totalCredited.isPositive()).toBe(true);
+    expect(summary.simulatedFrom.toISOString().slice(0, 10)).toBe("2026-08-21");
+    expect(summary.simulatedTo.toISOString().slice(0, 10)).toBe("2026-08-25");
 
     const entries = await prisma.ledgerEntry.findMany({
       where: { referenceType: "investment", referenceId: investment.id, entryType: "DAILY_INTEREST", direction: "CREDIT" },
@@ -340,18 +338,38 @@ describe("simulateDailyInterestDays", () => {
     }
   });
 
-  it("is idempotent: simulating the same investment/window twice does not double-credit", async () => {
+  it("running it a second time continues from the day after the last simulated entry, instead of colliding and posting zero", async () => {
     const mainAdmin = await getMainAdmin();
     const user = await makeUser();
     const investment = await makeInvestment(user.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
-    const today = new Date("2026-08-22T10:00:00.000Z");
 
-    const first = await simulateDailyInterestDays(mainAdmin.id, investment.id, 3, today);
-    const second = await simulateDailyInterestDays(mainAdmin.id, investment.id, 3, today);
+    const first = await simulateDailyInterestDays(mainAdmin.id, investment.id, 3);
+    const second = await simulateDailyInterestDays(mainAdmin.id, investment.id, 3);
 
     expect(first.entriesPosted).toBeGreaterThan(0);
-    expect(second.entriesPosted).toBe(0);
-    expect(second.totalCredited.isZero()).toBe(true);
+    expect(second.entriesPosted).toBeGreaterThan(0);
+    expect(second.totalCredited.isPositive()).toBe(true);
+    expect(second.simulatedFrom.getTime()).toBeGreaterThan(first.simulatedTo.getTime());
+
+    const entries = await prisma.ledgerEntry.count({
+      where: { referenceType: "investment", referenceId: investment.id, entryType: "DAILY_INTEREST", direction: "CREDIT" },
+    });
+    expect(entries).toBe(first.entriesPosted + second.entriesPosted);
+  });
+
+  it("replaying accrueDailyInterestForInvestment directly against an already-simulated date is idempotent (does not double-credit)", async () => {
+    const mainAdmin = await getMainAdmin();
+    const user = await makeUser();
+    const investment = await makeInvestment(user.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
+
+    const first = await simulateDailyInterestDays(mainAdmin.id, investment.id, 3);
+    // simulatedFrom itself (2026-08-21, Friday) is skipped, not posted — replay
+    // simulatedTo (2026-08-23, Sunday) instead, which the simulation actually
+    // posted a credit for, directly against the real accrual function (not
+    // the simulator, which always moves forward) to prove the underlying
+    // idempotency key still holds for these dates.
+    const replay = await accrueDailyInterestForInvestment(investment.id, first.simulatedTo);
+    expect(replay.skipped === false && replay.alreadyProcessed).toBe(true);
 
     const entries = await prisma.ledgerEntry.count({
       where: { referenceType: "investment", referenceId: investment.id, entryType: "DAILY_INTEREST", direction: "CREDIT" },
@@ -366,7 +384,7 @@ describe("simulateDailyInterestDays", () => {
     const targetInvestment = await makeInvestment(targetUser.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
     const otherInvestment = await makeInvestment(otherUser.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
 
-    await simulateDailyInterestDays(mainAdmin.id, targetInvestment.id, 3, new Date("2026-08-22T10:00:00.000Z"));
+    await simulateDailyInterestDays(mainAdmin.id, targetInvestment.id, 3);
 
     const otherEntries = await prisma.ledgerEntry.count({
       where: { referenceType: "investment", referenceId: otherInvestment.id, entryType: "DAILY_INTEREST" },
@@ -379,12 +397,12 @@ describe("simulateDailyInterestDays", () => {
     expect(otherWalletA.balance.isZero()).toBe(true);
   });
 
-  it("logs DAILY_INTEREST_SIMULATED to admin_actions, attributed to the acting admin and target user", async () => {
+  it("logs DAILY_INTEREST_SIMULATED to admin_actions, attributed to the acting admin and target user, including the simulated date range", async () => {
     const mainAdmin = await getMainAdmin();
     const user = await makeUser();
     const investment = await makeInvestment(user.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
 
-    await simulateDailyInterestDays(mainAdmin.id, investment.id, 3, new Date("2026-08-22T10:00:00.000Z"));
+    const summary = await simulateDailyInterestDays(mainAdmin.id, investment.id, 3);
 
     const action = await prisma.adminAction.findFirst({
       where: { adminId: mainAdmin.id, actionType: "DAILY_INTEREST_SIMULATED" },
@@ -393,5 +411,7 @@ describe("simulateDailyInterestDays", () => {
     expect(action).not.toBeNull();
     expect(action!.targetUserId).toBe(user.id);
     expect(action!.reason).toContain(investment.id);
+    expect(action!.reason).toContain(summary.simulatedFrom.toISOString().slice(0, 10));
+    expect(action!.reason).toContain(summary.simulatedTo.toISOString().slice(0, 10));
   });
 });

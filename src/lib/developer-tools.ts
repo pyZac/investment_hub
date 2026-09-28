@@ -206,11 +206,62 @@ export type SimulateDailyInterestResult = {
   daysProcessed: number;
   entriesPosted: number;
   totalCredited: Prisma.Decimal;
+  simulatedFrom: Date;
+  simulatedTo: Date;
 };
 
 const MIN_SIMULATION_DAYS = 1;
 const MAX_SIMULATION_DAYS = 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const PROFIT_START_WAIT_DAYS = 8;
+
+/**
+ * Finds the calendar date to start injecting simulated days from: the day
+ * after this investment's latest existing DAILY_INTEREST credit, or
+ * `purchasedAt + 8 days` (one day after the 7-day wait `profitStartsAt`
+ * itself encodes) if no DAILY_INTEREST entry exists yet.
+ *
+ * The simulated date isn't stored as its own column anywhere — only encoded
+ * in the idempotency key's trailing `YYYY-MM-DD` (see
+ * `accrueDailyInterestForInvestment`'s own comment on this being a stable
+ * contract). Reading `createdAt` instead would be wrong: for a backdated
+ * simulation, `createdAt` is the real wall-clock time the row was written,
+ * not the fabricated date it represents. Parsing every matching key and
+ * taking the lexicographic max is safe here since the format is a
+ * zero-padded `YYYY-MM-DD` suffix, which sorts the same lexicographically
+ * and chronologically.
+ */
+async function findNextSimulationStartDate(investment: {
+  id: string;
+  userId: string;
+  purchasedAt: Date;
+}): Promise<Date> {
+  const priorEntries = await prisma.ledgerEntry.findMany({
+    where: {
+      referenceType: "investment",
+      referenceId: investment.id,
+      entryType: "DAILY_INTEREST",
+      wallet: "A",
+      direction: "CREDIT",
+    },
+    select: { idempotencyKey: true },
+  });
+
+  const keyPrefix = `daily_interest:${investment.userId}:${investment.id}:`;
+  let latestDateKey: string | null = null;
+  for (const entry of priorEntries) {
+    if (!entry.idempotencyKey.startsWith(keyPrefix)) continue;
+    const dateKey = entry.idempotencyKey.slice(keyPrefix.length);
+    if (latestDateKey === null || dateKey > latestDateKey) {
+      latestDateKey = dateKey;
+    }
+  }
+
+  if (latestDateKey === null) {
+    return new Date(investment.purchasedAt.getTime() + PROFIT_START_WAIT_DAYS * MS_PER_DAY);
+  }
+  return new Date(new Date(`${latestDateKey}T00:00:00.000Z`).getTime() + MS_PER_DAY);
+}
 
 /**
  * "Simulate N days of Daily Interest" — Developer Tools' production
@@ -231,7 +282,14 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
  * pre-existing real investments — confirmed with the project owner that
  * this feature must target a single explicitly-chosen investment instead.
  *
- * Iterates oldest-to-newest: day 1 = today - (days - 1), day N = today,
+ * The injected date range always starts the day AFTER this investment's
+ * latest existing DAILY_INTEREST entry (or `purchasedAt + 8 days` if it has
+ * none yet) — see `findNextSimulationStartDate` — never anchored to
+ * `today`. An earlier version anchored day N to `today` regardless of what
+ * had already been posted, so re-running the simulation (or running it
+ * against an investment the real daily cron had already caught up to
+ * today) always collided with existing idempotency keys and silently
+ * posted zero entries. Iterates oldest-to-newest from that start date,
  * calling the real per-investment accrual function for each date in
  * order — required so day 2's running-balance read sees day 1's credit
  * already posted (real compounding), not just N independent single-day
@@ -259,15 +317,17 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
  * attributability as any other financial admin action (invariant #8),
  * arguably more so given the backdated-date nature of what it does.
  *
- * `today` is a caller-supplied parameter (invariant #4) — the calling
- * Server Action passes the real `new Date()` once, this function never
- * calls it internally.
+ * No `today`/`forDate` parameter: the simulated range is entirely
+ * determined by this investment's own ledger history (see
+ * `findNextSimulationStartDate`), never by the real current date — invariant
+ * #4 ("never call `new Date()` internally") is satisfied vacuously here
+ * since no wall-clock date is needed at all, only dates read back from
+ * already-persisted rows.
  */
 export async function simulateDailyInterestDays(
   actingAdminId: string,
   investmentId: string,
   days: number,
-  today: Date,
 ): Promise<SimulateDailyInterestResult> {
   await assertHasDeveloperToolsPermission(actingAdminId);
 
@@ -280,12 +340,14 @@ export async function simulateDailyInterestDays(
     throw new InvestmentNotFoundError();
   }
 
+  const startDate = await findNextSimulationStartDate(investment);
+  const endDate = new Date(startDate.getTime() + (days - 1) * MS_PER_DAY);
+
   let entriesPosted = 0;
   let totalCredited = new Prisma.Decimal(0);
 
-  for (let i = 1; i <= days; i++) {
-    const offsetDays = days - i;
-    const simulatedDate = new Date(today.getTime() - offsetDays * MS_PER_DAY);
+  for (let i = 0; i < days; i++) {
+    const simulatedDate = new Date(startDate.getTime() + i * MS_PER_DAY);
 
     const result = await accrueDailyInterestForInvestment(investmentId, simulatedDate);
     if (!result.skipped && !result.alreadyProcessed) {
@@ -310,14 +372,17 @@ export async function simulateDailyInterestDays(
     }
   }
 
+  const startDateKey = startDate.toISOString().slice(0, 10);
+  const endDateKey = endDate.toISOString().slice(0, 10);
+
   await prisma.adminAction.create({
     data: {
       adminId: actingAdminId,
       actionType: "DAILY_INTEREST_SIMULATED",
       targetUserId: investment.userId,
-      reason: `Simulated ${days} day(s) of Daily Interest for investment ${investmentId} (testing only, artificial dates).`,
+      reason: `Simulated ${days} day(s) of Daily Interest for investment ${investmentId} (${startDateKey} to ${endDateKey}, testing only, artificial dates).`,
     },
   });
 
-  return { daysProcessed: days, entriesPosted, totalCredited };
+  return { daysProcessed: days, entriesPosted, totalCredited, simulatedFrom: startDate, simulatedTo: endDate };
 }

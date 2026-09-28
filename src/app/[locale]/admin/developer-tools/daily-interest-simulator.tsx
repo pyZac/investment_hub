@@ -323,7 +323,7 @@ export function DailyInterestSimulator({ locale }: { locale: string }) {
       )}
 
       {summary && (
-        <div className="grid grid-cols-1 gap-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 text-sm sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 rounded-lg border border-success/30 bg-success/10 px-3 py-2.5 text-sm sm:grid-cols-2 lg:grid-cols-4">
           <div>
             <p className="text-xs text-muted-foreground">{t("summaryDaysProcessed")}</p>
             <p className="font-heading text-lg font-semibold tabular-nums" dir="ltr">
@@ -340,6 +340,12 @@ export function DailyInterestSimulator({ locale }: { locale: string }) {
             <p className="text-xs text-muted-foreground">{t("summaryTotalCredited")}</p>
             <p className="font-heading text-lg font-semibold tabular-nums" dir="ltr">
               ${summary.totalCredited}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">{t("summarySimulatedRange")}</p>
+            <p className="font-heading text-lg font-semibold tabular-nums" dir="ltr">
+              {summary.simulatedFrom} – {summary.simulatedTo}
             </p>
           </div>
         </div>
