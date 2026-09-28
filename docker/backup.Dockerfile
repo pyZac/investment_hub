@@ -10,7 +10,7 @@
 # postgresql-client-16` fails with "Unable to locate package" on plain
 # debian:12-slim) — so the official PGDG apt repository has to be added
 # explicitly to get version 16.
-FROM debian:12-slim
+FROM debian:13-slim
 
 RUN apt-get update -y \
   && apt-get install -y --no-install-recommends \
