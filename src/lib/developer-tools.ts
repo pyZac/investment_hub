@@ -1,6 +1,8 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { DEVELOPER_TOOLS_SETTINGS_ID } from "./developer-tools-constants";
 import { listJobStatuses, triggerJobRun } from "./job-monitor";
+import { accrueDailyInterestForInvestment } from "./daily-interest";
 
 async function assertHasDeveloperToolsPermission(actingAdminId: string): Promise<void> {
   const admin = await prisma.user.findUnique({ where: { id: actingAdminId } });
@@ -88,3 +90,180 @@ export async function setFridayBypass(actingAdminId: string, enabled: boolean): 
  * without duplicating job-monitor.ts's logic.
  */
 export { listJobStatuses, triggerJobRun };
+
+export class InvestmentNotFoundError extends Error {
+  constructor() {
+    super("No investment found with that id.");
+    this.name = "InvestmentNotFoundError";
+  }
+}
+
+export class InvalidSimulationDaysError extends Error {
+  constructor() {
+    super("Days must be a whole number between 1 and 30.");
+    this.name = "InvalidSimulationDaysError";
+  }
+}
+
+export type SimulationInvestmentSummary = {
+  id: string;
+  ownerName: string;
+  ownerEmail: string;
+  packageName: string;
+  amount: Prisma.Decimal;
+  status: "ACTIVE" | "CAPITAL_RELEASED";
+  purchasedAt: Date;
+  profitStartsAt: Date;
+};
+
+/**
+ * Looks up a single investment by id for the simulate-daily-interest UI's
+ * "confirm before you fire this" step — shows the admin exactly whose
+ * investment they're about to post real (if backdated) interest for,
+ * before any ledger write happens. Read-only, DEVELOPER_TOOLS-gated.
+ */
+export async function findInvestmentForSimulation(
+  actingAdminId: string,
+  investmentId: string,
+): Promise<SimulationInvestmentSummary> {
+  await assertHasDeveloperToolsPermission(actingAdminId);
+
+  const investment = await prisma.investment.findUnique({
+    where: { id: investmentId },
+    include: { user: { select: { name: true, email: true } }, package: { select: { name: true } } },
+  });
+  if (!investment) {
+    throw new InvestmentNotFoundError();
+  }
+
+  return {
+    id: investment.id,
+    ownerName: investment.user.name,
+    ownerEmail: investment.user.email,
+    packageName: investment.package.name,
+    amount: investment.amount,
+    status: investment.status,
+    purchasedAt: investment.purchasedAt,
+    profitStartsAt: investment.profitStartsAt,
+  };
+}
+
+export type SimulateDailyInterestResult = {
+  daysProcessed: number;
+  entriesPosted: number;
+  totalCredited: Prisma.Decimal;
+};
+
+const MIN_SIMULATION_DAYS = 1;
+const MAX_SIMULATION_DAYS = 30;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * "Simulate N days of Daily Interest" — Developer Tools' production
+ * -health-testing feature for exercising the REAL accrual function
+ * (`accrueDailyInterestForInvestment`, the exact same one the daily cron
+ * calls) against real compounding/rate/Friday-skip behavior, without
+ * waiting N real days for it to happen.
+ *
+ * Deliberately scoped to ONE admin-chosen investment, never every ACTIVE
+ * investment platform-wide — the real scheduled job
+ * (runDailyInterestCatchUp in daily-interest-job.ts) loops over every
+ * active investment for each day it processes; doing the same here with
+ * fabricated dates would post real, permanent, irreversible interest
+ * credits (ledger_entries is append-only, invariant #2) to every real
+ * user's real Wallet A, N extra times. That exact class of mistake
+ * corrupted a real user's balance to ~511M in an earlier phase (SCRUM-54,
+ * see tasks/lessons.md) when a fabricated-date test run swept in
+ * pre-existing real investments — confirmed with the project owner that
+ * this feature must target a single explicitly-chosen investment instead.
+ *
+ * Iterates oldest-to-newest: day 1 = today - (days - 1), day N = today,
+ * calling the real per-investment accrual function for each date in
+ * order — required so day 2's running-balance read sees day 1's credit
+ * already posted (real compounding), not just N independent single-day
+ * calls. Each date is naturally a distinct idempotency key
+ * (accrueDailyInterestForInvestment's own key embeds the calendar date),
+ * so no separate uniqueness handling is needed here — this was already
+ * true of the real function before this feature existed.
+ *
+ * `entriesPosted`/`totalCredited` only count days that actually posted a
+ * NEW credit — a day the real function itself skips (Friday, before the
+ * investment's own profit-start date, capital already released, owner
+ * suspended) or that was already processed (replay) contributes 0 to
+ * both, exactly mirroring what the real ledger ends up containing.
+ * `totalCredited` sums the ACTUAL PERSISTED ledger amounts (re-read after
+ * each post), not `accrueDailyInterestForInvestment`'s returned in-memory
+ * value — that value is computed before the `NUMERIC(24,8)` column's own
+ * rounding-on-write, so summing it directly can drift from what the
+ * ledger actually contains at high decimal precision (same rounding
+ * -boundary class of issue as the SCRUM-54 mistake #3 lesson in
+ * tasks/lessons.md: a persisted fixed-precision column must be read back
+ * post-rounding to match, not trusted from its own pre-write calculation).
+ *
+ * DEVELOPER_TOOLS-gated. Logs `DAILY_INTEREST_SIMULATED` to admin_actions
+ * — this writes real ledger entries for a real user, so it needs the same
+ * attributability as any other financial admin action (invariant #8),
+ * arguably more so given the backdated-date nature of what it does.
+ *
+ * `today` is a caller-supplied parameter (invariant #4) — the calling
+ * Server Action passes the real `new Date()` once, this function never
+ * calls it internally.
+ */
+export async function simulateDailyInterestDays(
+  actingAdminId: string,
+  investmentId: string,
+  days: number,
+  today: Date,
+): Promise<SimulateDailyInterestResult> {
+  await assertHasDeveloperToolsPermission(actingAdminId);
+
+  if (!Number.isInteger(days) || days < MIN_SIMULATION_DAYS || days > MAX_SIMULATION_DAYS) {
+    throw new InvalidSimulationDaysError();
+  }
+
+  const investment = await prisma.investment.findUnique({ where: { id: investmentId } });
+  if (!investment) {
+    throw new InvestmentNotFoundError();
+  }
+
+  let entriesPosted = 0;
+  let totalCredited = new Prisma.Decimal(0);
+
+  for (let i = 1; i <= days; i++) {
+    const offsetDays = days - i;
+    const simulatedDate = new Date(today.getTime() - offsetDays * MS_PER_DAY);
+
+    const result = await accrueDailyInterestForInvestment(investmentId, simulatedDate);
+    if (!result.skipped && !result.alreadyProcessed) {
+      entriesPosted++;
+      // Re-read the actual persisted (rounded) amount rather than trusting
+      // `result.amount` — see this function's own doc comment above for why.
+      // This exact idempotency-key format (`daily_interest:{userId}:
+      // {investmentId}:{YYYY-MM-DD}`) is already relied on verbatim by
+      // daily-interest.test.ts, daily-interest-job.test.ts, and
+      // phase-4-exit-test.test.ts — a stable, effectively-public contract
+      // of accrueDailyInterestForInvestment, not a fragile guess at its
+      // internals.
+      const dateKey = simulatedDate.toISOString().slice(0, 10);
+      const postedEntry = await prisma.ledgerEntry.findFirstOrThrow({
+        where: {
+          idempotencyKey: `daily_interest:${investment.userId}:${investmentId}:${dateKey}`,
+          wallet: "A",
+          direction: "CREDIT",
+        },
+      });
+      totalCredited = totalCredited.add(postedEntry.amount);
+    }
+  }
+
+  await prisma.adminAction.create({
+    data: {
+      adminId: actingAdminId,
+      actionType: "DAILY_INTEREST_SIMULATED",
+      targetUserId: investment.userId,
+      reason: `Simulated ${days} day(s) of Daily Interest for investment ${investmentId} (testing only, artificial dates).`,
+    },
+  });
+
+  return { daysProcessed: days, entriesPosted, totalCredited };
+}

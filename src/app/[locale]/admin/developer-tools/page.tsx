@@ -4,6 +4,7 @@ import { listJobStatuses, getFridayBypassStatus } from "@/lib/developer-tools";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { JobTriggerList } from "./job-trigger-list";
 import { FridayBypassToggle } from "./friday-bypass-toggle";
+import { DailyInterestSimulator } from "./daily-interest-simulator";
 
 export default async function AdminDeveloperToolsPage() {
   const t = await getTranslations("AdminDeveloperTools");
@@ -44,7 +45,7 @@ export default async function AdminDeveloperToolsPage() {
           <CardTitle className="text-base font-medium">{t("jobsHeading")}</CardTitle>
           <CardDescription>{t("jobsDescription")}</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-6">
           <JobTriggerList
             locale={locale}
             initialJobs={jobs.map((j) => ({
@@ -57,6 +58,7 @@ export default async function AdminDeveloperToolsPage() {
               lastFailedError: j.lastFailedError,
             }))}
           />
+          <DailyInterestSimulator locale={locale} />
         </CardContent>
       </Card>
     </div>

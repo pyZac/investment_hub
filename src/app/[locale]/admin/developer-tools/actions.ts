@@ -7,13 +7,25 @@ import {
   setFridayBypass,
   listJobStatuses,
   triggerJobRun,
+  findInvestmentForSimulation,
+  simulateDailyInterestDays,
+  InvestmentNotFoundError,
+  InvalidSimulationDaysError,
 } from "@/lib/developer-tools";
 import { UnknownJobTypeError, type JobType } from "@/lib/job-monitor";
+import { toDisplay } from "@/lib/display";
 
-export type DeveloperToolsErrorKey = "errorUnknownJob" | "errorForbidden" | "errorGeneric";
+export type DeveloperToolsErrorKey =
+  | "errorUnknownJob"
+  | "errorForbidden"
+  | "errorInvestmentNotFound"
+  | "errorInvalidDays"
+  | "errorGeneric";
 
 function mapError(err: unknown): DeveloperToolsErrorKey {
   if (err instanceof UnknownJobTypeError) return "errorUnknownJob";
+  if (err instanceof InvestmentNotFoundError) return "errorInvestmentNotFound";
+  if (err instanceof InvalidSimulationDaysError) return "errorInvalidDays";
   if (err instanceof Error && /forbidden/i.test(err.message)) return "errorForbidden";
   return "errorGeneric";
 }
@@ -109,6 +121,81 @@ export async function setFridayBypassAction(enabled: boolean, locale: string): P
     await setFridayBypass(actor.id, enabled);
     revalidatePath(`/${locale}/admin/developer-tools`);
     return { ok: true };
+  } catch (err) {
+    return { ok: false, errorKey: mapError(err) };
+  }
+}
+
+export type SimulationInvestmentRow = {
+  id: string;
+  ownerName: string;
+  ownerEmail: string;
+  packageName: string;
+  amount: string;
+  status: "ACTIVE" | "CAPITAL_RELEASED";
+};
+
+export type LookupInvestmentResult =
+  | { ok: true; investment: SimulationInvestmentRow }
+  | { ok: false; errorKey: DeveloperToolsErrorKey };
+
+export async function lookupInvestmentForSimulationAction(investmentId: string): Promise<LookupInvestmentResult> {
+  try {
+    const actor = await requirePermission("DEVELOPER_TOOLS", new Date());
+    const investment = await findInvestmentForSimulation(actor.id, investmentId);
+    return {
+      ok: true,
+      investment: {
+        id: investment.id,
+        ownerName: investment.ownerName,
+        ownerEmail: investment.ownerEmail,
+        packageName: investment.packageName,
+        amount: toDisplay(investment.amount),
+        status: investment.status,
+      },
+    };
+  } catch (err) {
+    return { ok: false, errorKey: mapError(err) };
+  }
+}
+
+export type SimulateDailyInterestRow = {
+  daysProcessed: number;
+  entriesPosted: number;
+  totalCredited: string;
+};
+
+export type SimulateDailyInterestResult =
+  | { ok: true; summary: SimulateDailyInterestRow }
+  | { ok: false; errorKey: DeveloperToolsErrorKey };
+
+/**
+ * Calls requirePermission("DEVELOPER_TOOLS", ...) first — the real
+ * server-side enforcement point (invariant #8) — before
+ * simulateDailyInterestDays' own inline re-check, same defense-in-depth
+ * pattern as every other action on this page. `days` is validated again
+ * inside the lib function itself (never trust the client's own min/max on
+ * the number input), and the investment id is re-resolved from scratch
+ * there too — never trusts a client-supplied id without the lib layer's
+ * own findUnique confirming it's real.
+ */
+export async function simulateDailyInterestAction(
+  investmentId: string,
+  days: number,
+  locale: string,
+): Promise<SimulateDailyInterestResult> {
+  try {
+    const actor = await requirePermission("DEVELOPER_TOOLS", new Date());
+    const summary = await simulateDailyInterestDays(actor.id, investmentId, days, new Date());
+    revalidatePath(`/${locale}/admin/developer-tools`);
+    return {
+      ok: true,
+      summary: {
+        daysProcessed: summary.daysProcessed,
+        entriesPosted: summary.entriesPosted,
+        totalCredited: toDisplay(summary.totalCredited),
+      },
+    };
   } catch (err) {
     return { ok: false, errorKey: mapError(err) };
   }

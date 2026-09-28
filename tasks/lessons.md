@@ -1937,3 +1937,89 @@ verification path (exact queries, exact things to look for in the
 output) so the conclusion gets checked against real numbers before
 anyone closes the ticket as "working as intended," rather than trusting
 code-reading alone to settle a live-data question.
+
+## 2026-09-28 — post-phase (Developer Tools: "Simulate N days of Daily Interest")
+Two things worth recording from this session, both caught before/during
+implementation rather than after.
+
+(1) Design correction, confirmed with user before writing code: the
+ticket's own wording ("loop N times, calling the daily interest accrual
+function") described `accrueDailyInterestForInvestment`, which only ever
+operates on ONE investment — but the real scheduled job
+(`runDailyInterestCatchUp`) loops that same function over EVERY ACTIVE
+investment for each day. If "simulate N days" had followed that same
+"every active investment" shape with fabricated dates (the literal
+reading of the ticket), it would have posted real, permanent, irreversible
+interest credits (ledger_entries is append-only, invariant #2) to every
+real user's real Wallet A, N extra times — the exact SCRUM-54 hazard
+already in this file (a fabricated-date sweep once corrupted a real
+balance to ~511M). Caught by reading `runDailyInterestCatchUp`'s actual
+loop shape before writing any simulate code, not by assuming the ticket's
+description of "the accrual function" was already scoped safely. Fix:
+confirmed with the user that the feature targets ONE admin-chosen
+investment only (looked up and confirmed by owner name before the
+"simulate" button is even enabled) — never a platform-wide sweep.
+
+(2) Real, pre-existing precision bug surfaced by this feature (not
+introduced by it): `accrueDailyInterestForInvestment` returns `amount` as
+the PRE-ROUNDING in-memory `Prisma.Decimal` value (e.g.
+"1.9230769230769230769", since `dailyRate()` is a repeating decimal for
+most real rate/divisor combinations), while the ledger_entries row it
+actually writes stores the `NUMERIC(24,8)`-rounded value
+("1.92307692"). The ledger itself has always been correct — this is not
+a financial-integrity bug — but the function's OWN RETURN VALUE has
+silently disagreed with what it actually persisted, for every real daily
+interest credit ever posted, since Phase 4. Never surfaced before because
+no caller previously summed multiple returned amounts and compared the
+total against a real ledger sum; the new simulate feature's own test
+("summed ledger entries must equal the reported totalCredited") is what
+caught it. Confirmed with the user to fix this LOCALLY in the new
+`simulateDailyInterestDays` only (re-read each posted entry's actual
+persisted amount from the DB via its known idempotency-key format, rather
+than trust the function's returned value) — NOT to change
+`accrueDailyInterestForInvestment`'s own return value, which would touch
+the production interest engine itself and was explicitly out of this
+ticket's scope.
+Rule: when a new caller sums/aggregates a function's returned numeric
+value across multiple calls and compares it against a persisted total,
+don't assume the function's own return value is already
+rounding-consistent with what it wrote to a fixed-precision DB column —
+verify by writing exactly that cross-check as a test (as done here)
+rather than trusting it silently, since a single call's own tests will
+never catch a rounding mismatch that only compounds/becomes visible
+across multiple calls summed together.
+
+(3) Separately, discovered while running the full suite as the mandatory
+final check (unrelated to either of the above, zero diff on either file
+this session): `daily-interest-job.test.ts` (4 tests) and
+`phase-4-exit-test.test.ts` (1 test) now fail on real calendar time
+alone. Both fabricate an August 2026 "today" and assume they control the
+single most-recently-COMPLETED `daily_interest` `job_runs` row in the
+whole (shared, no isolated test DB) dev database. Real time has now
+advanced to 2026-09-28, and the real worker has genuinely completed real
+periods through 2026-09-27 — so `unprocessedPeriods`'s `lastCompleted`
+lookup (global `orderBy: periodKey desc`, not scoped to a test's own
+seeded baseline) now resolves to the real worker's real-September row,
+which is chronologically AFTER the tests' fabricated August window,
+making `start > end` and producing zero periods to process where the
+tests expect several. This is a standing design flaw (these test files
+have always implicitly depended on "no one has run the real daily
+-interest job past my fabricated dates yet"), not something either
+session's diff caused, and it will keep failing — and get worse — every
+day real time advances further past their hardcoded 2026-08 window.
+Confirmed with the user to leave both files untouched (out of scope for
+this ticket) and record it here rather than silently fix or silently
+ignore it.
+Rule: a test that fabricates dates in the past and separately assumes
+"the global most-recent COMPLETED row for this job type" will always be
+at or before its own fabricated window is not just theoretically fragile
+— it has a real, calculable expiry date (the moment real wall-clock time
+and the real scheduler's real progress catches up to and passes the
+fabricated window), and this project's dev DB has no per-test isolation
+to protect against that (per the standing Phase 2 lesson). When a
+fabricated-date test in this codebase fails with a "found zero periods"
+or "wrong reference balance" symptom and the file hasn't been touched,
+check whether real calendar time has simply caught up to its hardcoded
+dates before assuming a real regression — and flag it explicitly as a
+ticking-clock design issue for these specific files, not just a flaky
+test to retry.

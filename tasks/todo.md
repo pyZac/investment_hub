@@ -1,105 +1,102 @@
-# Session: Developer Tools admin page (job triggers + Friday-gate bypass)
+# Session: "Simulate N days of Daily Interest" in Developer Tools
 
-Confirmed with user before building:
-- Job triggering (ticket step 1) is largely already built (job-monitor.ts +
-  /admin/job-monitor). We EXTEND it (confirmation dialog + missing
-  reconciliation label) rather than duplicate it. No new REST API — use a
-  Server Action, matching every other admin action in this app (zero
-  existing /api/admin/* routes exist).
-- Friday-bypass flag covers ALL THREE real Friday-gated actions:
-  transferAtoB (A->B profit), releaseCapital (capital release),
-  submitWithdrawalRequest (B-exit submission) — i.e. every real caller of
-  `assertFriday`. transferCtoB has no Friday gate already (confirmed, not
-  touched).
-- Storage: NOT commissionConfig (wrong semantics — that's a versioned rate
-  table, this is an unrelated boolean). NOT in-memory on the worker (the
-  worker is a genuinely separate container/process from the `app`
-  container that runs the Server Actions calling assertFriday — an
-  in-memory flag there would be invisible to the code that needs to read
-  it). New tiny DB-backed singleton table instead, same
-  "at-most-one-row" pattern as existing config tables.
+Confirmed with user before building: simulation targets ONE specific
+investment (admin picks/enters it), never every active investment
+platform-wide. The ticket's literal wording ("loop N times, calling the
+accrual function") would, if it mirrored runDailyInterestCatchUp's
+"every ACTIVE investment" loop, post real permanent interest to every
+real user's real Wallet A — the exact SCRUM-54 hazard already in
+lessons.md (a fabricated-date sweep corrupted a real balance to ~511M in
+an earlier phase). Scoping to one explicitly-chosen investment removes
+that blast radius entirely while still testing the real accrual function,
+real compounding, and real idempotency behavior.
 
-## Schema changes
-- [ ] New `DeveloperToolsSetting` model: `id`, `bypassFridayGate Boolean
-      @default(false)`, `updatedAt`, `updatedByAdminId String?` (FK to
-      User, nullable like commissionConfig's setByAdminId). Enforce
-      singleton via seeding exactly one row (id fixed, e.g. "singleton")
-      rather than a partial-unique-index trick — simpler for a table that
-      is UPDATED in place (not versioned/append-only like commission_config),
-      since this is genuinely mutable operational state, not a financial
-      rate history.
-- [ ] New `AdminPermission` enum value: `DEVELOPER_TOOLS`.
-- [ ] New `AdminActionType` enum values: `JOB_MONITOR_TRIGGERED` already
-      exists (reuse for job triggers from this page too — same action,
-      same meaning). Add `FRIDAY_GATE_BYPASS_TOGGLED`.
-- [ ] Migration: hand-written (matches project convention for
-      constraints/singleton seeds) — create table, seed the one row.
+## Corrected understanding of the accrual function
+`accrueDailyInterestForInvestment(investmentId, forDate)` in
+src/lib/daily-interest.ts ALREADY takes `forDate: Date` as a required
+parameter (invariant #4 — no `new Date()` inside engine functions was
+ever violated here). The ticket's step "if it doesn't already accept a
+date override, add one" doesn't apply — no change needed to this
+function's signature at all. The "unique date -> unique idempotency key"
+requirement is also already satisfied by construction: the idempotency
+key embeds `dateKey(forDate)`, so distinct fabricated dates naturally
+produce distinct keys with zero extra code.
+
+## Date iteration
+"day 1 = oldest, day N = today" -> for i in 1..N, date_i = today - (N - i)
+days, so date_N = today (i=N -> offset 0) and date_1 = today - (N-1) days.
+Iterate oldest-to-newest so compounding accrues in the correct order
+(day 1's credit must exist before day 2's running-balance read).
 
 ## Backend
-- [ ] `src/lib/withdrawal-guard.ts`: `assertFriday` becomes async, reads
-      the singleton row; if `bypassFridayGate` is true, returns without
-      throwing regardless of the real day. Update its 3 callers
-      (transfers.ts, capital-release.ts, withdrawal-requests.ts) to
-      `await assertFriday(...)`.
-- [ ] New `src/lib/developer-tools.ts`:
-      - `assertHasDeveloperToolsPermission` (same pattern as every other
-        lib file's permission check)
-      - `getFridayBypassStatus(actingAdminId)`: read-only, returns
-        `{ enabled, updatedAt, updatedByAdminName }`
-      - `setFridayBypass(actingAdminId, enabled, forDate)`: updates the
-        singleton row, logs `FRIDAY_GATE_BYPASS_TOGGLED` to admin_actions
-        with enabled/disabled in the reason text
-      - Re-export/wrap `listJobStatuses`/`triggerJobRun` from job-monitor.ts
-        rather than reimplementing — this page is a consumer, not a fork.
-- [ ] `src/app/[locale]/admin/developer-tools/actions.ts`: Server Actions
-      wrapping the above (`requirePermission("DEVELOPER_TOOLS", ...)`
-      first, per invariant #8), mirroring job-monitor/actions.ts's shape.
+- [ ] New `simulateDailyInterestDays(actingAdminId, investmentId, days,
+      today)` in src/lib/developer-tools.ts: DEVELOPER_TOOLS-gated, N in
+      [1,30], loops oldest-to-newest calling
+      `accrueDailyInterestForInvestment(investmentId, date_i)` for real
+      (this DOES write real ledger entries for this ONE investment/user —
+      that's the whole point of testing real compounding — but scoped to
+      an investment the admin explicitly chose, not a sweep). Tallies
+      `entriesPosted` (only non-skipped, non-alreadyProcessed results
+      count as newly posted) and `totalCredited` (sum of `.amount` for
+      those). Logs a new `DAILY_INTEREST_SIMULATED` admin_actions row
+      (reason includes investmentId + days) — this is exactly the kind of
+      action that must be attributable per invariant #8, doubly so since
+      it writes real ledger entries.
+  - [ ] Need a small lookup helper too: `findInvestmentForSimulation(actingAdminId,
+        investmentId)` — returns investment + owner name/email + package
+        name so the UI can show "you are about to simulate interest for
+        <name>'s <package> investment" before the confirm dialog, so an
+        admin doesn't fire this blind at a raw ID typo.
+- [ ] New `AdminActionType` enum value: `DAILY_INTEREST_SIMULATED`. Add to
+      security-log.ts's `ADMIN_ACTION_TYPE_LABELS` (exhaustive
+      Record<AdminActionType,...> — tsc enforces this, confirmed pattern
+      from the last two sessions).
+- [ ] Route: ticket asks for `POST /api/admin/developer-tools/simulate-daily-interest`
+      — but this app has ZERO other /api/admin/* routes (confirmed
+      earlier session); every admin action goes through Server Actions.
+      DECISION: use a Server Action in
+      src/app/[locale]/admin/developer-tools/actions.ts, consistent with
+      every other action on this page and this whole admin panel, same
+      choice already made for the job-trigger/Friday-bypass actions on
+      this exact page. Not re-litigating this per-session — it's the
+      established convention now.
+- [ ] `actions.ts`: `lookupInvestmentForSimulationAction(investmentId)`,
+      `simulateDailyInterestAction(investmentId, days, locale)` —
+      `requirePermission("DEVELOPER_TOOLS", ...)` first, mirrors the
+      page's existing action shapes exactly.
 
 ## Frontend
-- [ ] `src/app/[locale]/admin/developer-tools/page.tsx`: page shell,
-      `requirePermissionOrRedirect("DEVELOPER_TOOLS", ...)`.
-- [ ] `src/app/[locale]/admin/developer-tools/job-trigger-list.tsx`: like
-      job-status-list.tsx but with a Dialog confirmation step before
-      calling trigger (per frontend-design skill's "every destructive/
-      consequential action shows a confirmation step" rule) — reuses
-      listJobStatuses/triggerJobRun via the new page's own actions.ts.
-      Include reconciliation's label (missing from job-monitor's own
-      JOB_TYPE_LABEL_KEYS — fix there too since it's a pre-existing gap
-      this page would otherwise inherit).
-- [ ] `src/app/[locale]/admin/developer-tools/friday-bypass-toggle.tsx`:
-      a switch/toggle, clearly labeled "Testing only — bypasses Friday
-      withdrawal restriction" (destructive/warning color treatment per
-      design skill's semantic-color rule), shows who last changed it and
-      when.
-- [ ] Also fix job-monitor's own `JOB_TYPE_LABEL_KEYS` to include
-      `reconciliation` (pre-existing gap, low-risk one-line fix, avoids
-      shipping a second page with the same known bug).
-- [ ] Add confirmation dialog to the EXISTING job-monitor page too, or
-      leave it as-is and only add it to the new Developer Tools page? —
-      DECISION: add to both, since triggering these jobs manually is
-      exactly the kind of consequential action the design skill says
-      needs a confirm step, and leaving job-monitor's own trigger button
-      without one while the new page has one is an inconsistent standard
-      for the same action reachable from two places.
-- [ ] `admin-sidebar-nav.tsx`: add a "Developer Tools" link.
-- [ ] Translations: new `AdminDeveloperTools` namespace in en.json/ar.json
-      (bilingual, per project convention) + one new `AdminNav` key.
+- [ ] New `daily-interest-simulator.tsx` component, rendered inside the
+      existing Daily Interest job row (or just below the job table) on
+      /admin/developer-tools:
+      - investment ID text input + "Look up" button -> shows owner
+        name/email, package name, current status once found
+      - number input for days (default 7, min 1, max 30) — only enabled
+        once an investment is successfully looked up
+      - "Simulate N days" button -> confirmation dialog with the exact
+        warning text from the ticket, showing which investment/owner it
+        will affect
+      - after running: show the summary (daysProcessed, entriesPosted,
+        totalCredited)
+- [ ] Translations: new keys in AdminDeveloperTools (en.json + ar.json).
 
 ## Verification
-- [x] tsc --noEmit clean (also required adding DEVELOPER_TOOLS to two
-      unrelated exhaustive/hand-maintained lists: security-log.ts's
-      Record<AdminActionType,...> label map, and the sub-admin
-      create/edit forms' hand-maintained PERMISSION_CATALOG arrays +
-      permission_DEVELOPER_TOOLS translation key — none of these were in
-      the original plan, found only by tsc/manual grep)
-- [x] New tests: developer-tools.test.ts (8 tests: permission gate, main
-      admin bypass, toggle round-trip, attribution, audit log);
-      withdrawal-guard.test.ts rewritten for async assertFriday +
-      4 new bypass-on/off cases (8 total)
-- [x] transfers.test.ts/capital-release.test.ts/withdrawal-requests.test.ts
-      all pass unchanged (39 tests) — confirms bypass-off behaves
-      identically to the pre-change Friday gate
-- [x] Manually verified the full real call chain (assertFriday reading
-      the live singleton row) via tsx, not just unit tests in isolation
-- [x] Full suite: 616/617 (1 pre-existing skip), 0 reconciliation drift
+- [x] tsc --noEmit clean
+- [x] New tests in developer-tools.test.ts (10 new tests): permission
+      gate, correct date sequence + compounding, correct
+      entriesPosted/totalCredited tally (including Friday-skip), 
+      idempotent replay, audit log written, does NOT touch any other
+      investment/user's balance
+- [x] Found + fixed a real precision bug during test-writing (see
+      lessons.md): totalCredited now re-reads persisted rounded ledger
+      amounts instead of trusting accrueDailyInterestForInvestment's
+      pre-rounding return value. Confirmed with user: fixed locally in
+      the new code only, did not touch the real accrual function.
+- [x] Full suite: 621/627 passing. 2 unrelated, pre-existing test files
+      (daily-interest-job.test.ts, phase-4-exit-test.test.ts — zero diff
+      this session) now fail purely from real calendar time (2026-09-28)
+      having advanced past their hardcoded August 2026 fabricated dates
+      and colliding with the real worker's real job_runs progress.
+      Confirmed with user: documented in lessons.md, left both files
+      untouched, out of scope for this ticket.
 - [x] Commit + push
