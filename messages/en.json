@@ -1302,6 +1302,7 @@
     "errorUnknownJob": "Unknown job type.",
     "errorInvestmentNotFound": "No investment found with that ID.",
     "errorInvalidDays": "Days must be a whole number between 1 and 30.",
+    "errorSimulationWouldExceedToday": "This would simulate dates beyond today — this investment is already caught up closer to today than that. Reduce the number of days.",
     "errorGeneric": "Something went wrong. Please try again."
   },
   "AdminSolvency": {

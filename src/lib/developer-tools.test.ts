@@ -11,9 +11,16 @@ import {
   simulateDailyInterestDays,
   InvestmentNotFoundError,
   InvalidSimulationDaysError,
+  SimulationWouldExceedTodayError,
 } from "./developer-tools";
 import { DEVELOPER_TOOLS_SETTINGS_ID } from "./developer-tools-constants";
 import { accrueDailyInterestForInvestment } from "./daily-interest";
+
+// Fixed reference "today" for every simulateDailyInterestDays call in this
+// file — every test's investment is purchased in August 2026, so this is
+// comfortably after any of their simulated ranges without needing each
+// test to compute its own safe "today".
+const SIMULATION_TODAY = new Date("2026-12-31T00:00:00.000Z");
 
 const createdUserIds: string[] = [];
 const createdPackageIds: string[] = [];
@@ -280,7 +287,9 @@ describe("simulateDailyInterestDays", () => {
     const user = await makeUser();
     const investment = await makeInvestment(user.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
 
-    await expect(simulateDailyInterestDays(subAdmin.id, investment.id, 3)).rejects.toThrow(/forbidden/i);
+    await expect(simulateDailyInterestDays(subAdmin.id, investment.id, 3, SIMULATION_TODAY)).rejects.toThrow(
+      /forbidden/i,
+    );
   });
 
   it("rejects days outside [1, 30]", async () => {
@@ -288,22 +297,66 @@ describe("simulateDailyInterestDays", () => {
     const user = await makeUser();
     const investment = await makeInvestment(user.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
 
-    await expect(simulateDailyInterestDays(mainAdmin.id, investment.id, 0)).rejects.toThrow(
+    await expect(simulateDailyInterestDays(mainAdmin.id, investment.id, 0, SIMULATION_TODAY)).rejects.toThrow(
       InvalidSimulationDaysError,
     );
-    await expect(simulateDailyInterestDays(mainAdmin.id, investment.id, 31)).rejects.toThrow(
+    await expect(simulateDailyInterestDays(mainAdmin.id, investment.id, 31, SIMULATION_TODAY)).rejects.toThrow(
       InvalidSimulationDaysError,
     );
-    await expect(simulateDailyInterestDays(mainAdmin.id, investment.id, 2.5)).rejects.toThrow(
+    await expect(simulateDailyInterestDays(mainAdmin.id, investment.id, 2.5, SIMULATION_TODAY)).rejects.toThrow(
       InvalidSimulationDaysError,
     );
   });
 
   it("throws InvestmentNotFoundError for a nonexistent id", async () => {
     const mainAdmin = await getMainAdmin();
-    await expect(simulateDailyInterestDays(mainAdmin.id, "nonexistent-id", 3)).rejects.toThrow(
-      InvestmentNotFoundError,
+    await expect(
+      simulateDailyInterestDays(mainAdmin.id, "nonexistent-id", 3, SIMULATION_TODAY),
+    ).rejects.toThrow(InvestmentNotFoundError);
+  });
+
+  it("refuses when the computed end date would land after today, without posting anything", async () => {
+    const mainAdmin = await getMainAdmin();
+    const user = await makeUser();
+    const investment = await makeInvestment(user.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
+    // Start date resolves to 2026-08-21 (purchasedAt + 8 days). 5 days
+    // reaches 2026-08-25, which is AFTER this deliberately-early "today".
+    const today = new Date("2026-08-23T00:00:00.000Z");
+
+    await expect(simulateDailyInterestDays(mainAdmin.id, investment.id, 5, today)).rejects.toThrow(
+      SimulationWouldExceedTodayError,
     );
+
+    const entries = await prisma.ledgerEntry.count({
+      where: { referenceType: "investment", referenceId: investment.id, entryType: "DAILY_INTEREST" },
+    });
+    expect(entries).toBe(0);
+  });
+
+  it("allows a range that lands exactly on today (the boundary is inclusive)", async () => {
+    const mainAdmin = await getMainAdmin();
+    const user = await makeUser();
+    const investment = await makeInvestment(user.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
+    // Start date resolves to 2026-08-21; 5 days reaches 2026-08-25 exactly.
+    const today = new Date("2026-08-25T00:00:00.000Z");
+
+    await expect(simulateDailyInterestDays(mainAdmin.id, investment.id, 5, today)).resolves.not.toThrow();
+  });
+
+  it("repeated calls chaining forward are each still bounded by today, so they cannot collectively run past it", async () => {
+    const mainAdmin = await getMainAdmin();
+    const user = await makeUser();
+    const investment = await makeInvestment(user.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
+    const today = new Date("2026-08-25T00:00:00.000Z");
+
+    // First call consumes 08-21..08-23 (3 days from the 08-21 start).
+    await simulateDailyInterestDays(mainAdmin.id, investment.id, 3, today);
+    // Second call would start at 08-24 and run 3 days to 08-26 — past today.
+    await expect(simulateDailyInterestDays(mainAdmin.id, investment.id, 3, today)).rejects.toThrow(
+      SimulationWouldExceedTodayError,
+    );
+    // But exactly 2 days (08-24..08-25) is still within bounds.
+    await expect(simulateDailyInterestDays(mainAdmin.id, investment.id, 2, today)).resolves.not.toThrow();
   });
 
   it("with no prior DAILY_INTEREST entries, starts the day after the 7-day wait ends (purchasedAt + 8 days), posts one entry per non-Friday day, compounding correctly", async () => {
@@ -314,7 +367,7 @@ describe("simulateDailyInterestDays", () => {
     // 08-24 (Mon), 08-25 (Tue) — 4 real accrual days out of 5 requested.
     const investment = await makeInvestment(user.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
 
-    const summary = await simulateDailyInterestDays(mainAdmin.id, investment.id, 5);
+    const summary = await simulateDailyInterestDays(mainAdmin.id, investment.id, 5, SIMULATION_TODAY);
 
     expect(summary.daysProcessed).toBe(5);
     expect(summary.entriesPosted).toBe(4);
@@ -343,8 +396,8 @@ describe("simulateDailyInterestDays", () => {
     const user = await makeUser();
     const investment = await makeInvestment(user.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
 
-    const first = await simulateDailyInterestDays(mainAdmin.id, investment.id, 3);
-    const second = await simulateDailyInterestDays(mainAdmin.id, investment.id, 3);
+    const first = await simulateDailyInterestDays(mainAdmin.id, investment.id, 3, SIMULATION_TODAY);
+    const second = await simulateDailyInterestDays(mainAdmin.id, investment.id, 3, SIMULATION_TODAY);
 
     expect(first.entriesPosted).toBeGreaterThan(0);
     expect(second.entriesPosted).toBeGreaterThan(0);
@@ -362,7 +415,7 @@ describe("simulateDailyInterestDays", () => {
     const user = await makeUser();
     const investment = await makeInvestment(user.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
 
-    const first = await simulateDailyInterestDays(mainAdmin.id, investment.id, 3);
+    const first = await simulateDailyInterestDays(mainAdmin.id, investment.id, 3, SIMULATION_TODAY);
     // simulatedFrom itself (2026-08-21, Friday) is skipped, not posted — replay
     // simulatedTo (2026-08-23, Sunday) instead, which the simulation actually
     // posted a credit for, directly against the real accrual function (not
@@ -384,7 +437,7 @@ describe("simulateDailyInterestDays", () => {
     const targetInvestment = await makeInvestment(targetUser.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
     const otherInvestment = await makeInvestment(otherUser.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
 
-    await simulateDailyInterestDays(mainAdmin.id, targetInvestment.id, 3);
+    await simulateDailyInterestDays(mainAdmin.id, targetInvestment.id, 3, SIMULATION_TODAY);
 
     const otherEntries = await prisma.ledgerEntry.count({
       where: { referenceType: "investment", referenceId: otherInvestment.id, entryType: "DAILY_INTEREST" },
@@ -402,7 +455,7 @@ describe("simulateDailyInterestDays", () => {
     const user = await makeUser();
     const investment = await makeInvestment(user.id, "1000", new Date("2026-08-13T00:00:00.000Z"));
 
-    const summary = await simulateDailyInterestDays(mainAdmin.id, investment.id, 3);
+    const summary = await simulateDailyInterestDays(mainAdmin.id, investment.id, 3, SIMULATION_TODAY);
 
     const action = await prisma.adminAction.findFirst({
       where: { adminId: mainAdmin.id, actionType: "DAILY_INTEREST_SIMULATED" },

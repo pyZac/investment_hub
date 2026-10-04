@@ -2061,3 +2061,45 @@ absence of a target-user parameter in an existing function's signature is
 itself a security contract, not just an implementation detail, and
 skipping this check would have silently reintroduced exactly the
 class of bug invariant #9 exists to name and prevent.
+
+## 2026-09-30 — post-phase (simulateDailyInterestDays: no upper bound, pushed a real investment 90 days into the future)
+Mistake: last session's fix for "simulate posts 0 entries" (chaining the
+start date forward from the investment's last existing DAILY_INTEREST
+entry instead of anchoring to `today`) was correct on its own, but removing
+the `today` parameter entirely left the function with NO upper bound at
+all. On investment cmudeva3t000zmn01z8gr3ntx, three manual "Simulate 30
+days" clicks in one session (09:13, 09:20, 09:20 — each one correctly
+continuing from wherever the last one left off, exactly as designed) pushed
+its ledger 90 real days into the future, to 2026-12-28. The real daily cron
+then found this investment "already processed" through Dec 28 and posted
+nothing, every night — which is EXACTLY the "no new profit entries after
+Oct 1" bug reported and investigated as a possible scheduler bug in the
+same session, before the real cause (this tool, not the scheduler) was
+found. Initially suspected as "duplicate ledger entries" too (same
+idempotency key, same amount, ~5ms apart) — this was a false alarm: those
+were the normal, correct CREDIT (wallet A) + DEBIT (SYSTEM_EXTERNAL) pair
+every `postTransaction` call writes, confirmed by actually checking the
+`wallet`/`direction` columns rather than assuming two rows sharing an
+idempotency key meant a double-write bug.
+Rule: (1) **any "continue forward from last known state" design (chaining
+off the last entry, last job_runs row, etc.) needs an independent upper
+bound check against the real current date, even when the start-date logic
+itself is completely correct** — "correctly continues from where it left
+off" and "cannot run past today" are two separate guarantees, and fixing
+the first does not imply the second. `simulateDailyInterestDays` now takes
+`today` again, used ONLY as a ceiling on the computed end date (never to
+compute the start), and refuses outright (posts nothing) rather than
+silently truncating `days` if the range would exceed it. (2) **Before
+concluding two ledger rows sharing an idempotency key are a duplicate-write
+bug, check their `wallet`/`direction` columns, not just the key/amount** —
+a CREDIT+DEBIT pair from one `postTransaction` call always shares the same
+key and amount by design (debits=credits) and will always land within a
+few milliseconds of each other (sequential `.create()` calls inside one
+`$transaction`); this is indistinguishable from a true duplicate unless the
+wallet/direction columns are actually inspected. (3) This is the second
+time in two sessions that a fix for this exact feature (simulate daily
+interest) needed a safety property added after the fact rather than being
+designed in from the start — any future "replay/catch-up/simulate forward"
+tool in this codebase should get an explicit "how far can this possibly
+run" bound in its own first design pass, not just an idempotency guarantee
+against re-running the same range twice.

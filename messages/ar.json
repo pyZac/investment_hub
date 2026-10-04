@@ -1302,6 +1302,7 @@
     "errorUnknownJob": "نوع مهمة غير معروف.",
     "errorInvestmentNotFound": "لم يتم العثور على استثمار بهذا المعرّف.",
     "errorInvalidDays": "يجب أن تكون الأيام عددًا صحيحًا بين 1 و30.",
+    "errorSimulationWouldExceedToday": "سيؤدي ذلك إلى محاكاة تواريخ بعد اليوم — هذا الاستثمار محدث بالفعل إلى أقرب من ذلك. قلل عدد الأيام.",
     "errorGeneric": "حدث خطأ ما. الرجاء المحاولة مرة أخرى."
   },
   "AdminSolvency": {

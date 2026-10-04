@@ -1,50 +1,55 @@
-# Session: Fix simulateDailyInterestDays posting 0 entries / $0.00
+# Session: Daily Interest simulator pushed investment 90 days into the future
 
-Root cause confirmed: the function always builds its N-day window ending at
-`today` (`offsetDays = days - i`, `simulatedDate = today - offsetDays`). If
-those calendar dates already have a DAILY_INTEREST ledger entry for this
-investment (e.g. re-running the simulation, or the real daily cron already
-caught the investment up to today), `postTransaction`'s idempotency-key
-collision makes every iteration a silent no-op replay
-(`alreadyProcessed: true`), so `entriesPosted` stays 0 and `totalCredited`
-stays $0.00 — not a crash, just silently correct-looking zero output.
+## Findings (confirmed against real production data)
 
-## Plan
-- [ ] In `simulateDailyInterestDays` (src/lib/developer-tools.ts), before
-      building the date range: query `ledgerEntry` for this investment's
-      latest DAILY_INTEREST CREDIT entry (`referenceType: "investment",
-      referenceId: investmentId, entryType: "DAILY_INTEREST", wallet: "A",
-      direction: "CREDIT"`, `orderBy: { createdAt: "desc" }` or derive from
-      the idempotency key's date — use `createdAt` desc `take: 1`, but the
-      actual calendar date simulated is what matters, so read it back via
-      the comment/dayNumber... simplest: aggregate isn't enough, need the
-      actual latest date. Store DAILY_INTEREST dates in a way we can recover
-      the calendar date: the idempotency key embeds `YYYY-MM-DD` at the end
-      — parse it, OR just track the max `forDate` some other way. Simplest
-      robust approach: since we don't store forDate as a column, use
-      `createdAt` of the ledger entry as a proxy for the simulated date is
-      WRONG when simulating backdated days (createdAt = real now, not the
-      fabricated date). Must parse the date out of `idempotencyKey`
-      (format: `daily_interest:{userId}:{investmentId}:{YYYY-MM-DD}`,
-      already treated as a stable contract elsewhere in this file) — find
-      the entry with the lexicographically max date suffix among rows
-      matching this investment.
-- [ ] Start the injected range at (last existing date + 1 day). Fall back to
-      `investment.purchasedAt + 8 days` if no prior DAILY_INTEREST entry
-      exists for this investment (day 8 = one day after the 7-day wait per
-      the existing dayNumber comment convention).
-- [ ] Range is always `[startDate, startDate + days - 1]`, i.e. no longer
-      anchored to `today` at all — simulated days are always the N days
-      right after the last real/simulated day on record.
-- [ ] Add `simulatedFrom`/`simulatedTo` (or similar) to
-      `SimulateDailyInterestResult` and return them so the admin UI can
-      show "Simulated Sep 21 - Sep 27".
-- [ ] Update the Server Action / UI caller if the result shape change needs
-      surfacing (check actions.ts and the results display component).
-- [ ] Update/add tests for developer-tools.ts covering: fresh investment
-      (no prior entries) starts at purchasedAt+8; investment with existing
-      DAILY_INTEREST entries continues from last+1 and produces nonzero
-      entriesPosted/totalCredited on a second simulation call; returned
-      date range matches what was simulated.
-- [ ] tsc --noEmit clean, run affected test file(s).
-- [ ] Commit + push.
+**Bug 2 ("duplicate entries") does NOT exist.** The two rows per date the
+user flagged are the normal, correct double-entry pair: wallet=A/CREDIT and
+wallet=SYSTEM_EXTERNAL/DEBIT, same amount (by design — debits=credits),
+~5ms apart (two sequential `create()` calls inside one `$transaction`).
+Confirmed directly from real column data. No code change needed for this.
+
+**Bug 1 is real, and bigger than reported.** Three manual "Simulate 30 days"
+clicks on 2026-09-29 (09:13:40, 09:20:33, 09:20:53 — ~7min then ~20s apart)
+each correctly chained forward from the investment's current last-posted
+date (by design — that's last session's fix for the "posts 0 entries" bug).
+But nothing capped the total at real "today" — three clicks of 30 days each
+pushed the investment's ledger to 2026-12-28, 90 days past where real time
+actually is (2026-09-29/30). The real daily cron now finds this investment
+"already processed" through Dec 28 and correctly posts nothing — which IS
+the original "no new profit entries after Oct 1" symptom, fully explained,
+no scheduler bug needed.
+
+Root cause: `simulateDailyInterestDays` has no upper bound relative to the
+real current date, and the UI gives no warning that a click chains forward
+from wherever the ledger already is, not from "today."
+
+## Plan — DONE (except running against production, which only Zac can do)
+
+- [x] Add a safety cap: `simulateDailyInterestDays` now takes `today` again
+      and refuses (SimulationWouldExceedTodayError, nothing written) if the
+      computed `endDate` would land beyond it. Start date is still always
+      last-entry+1, untouched.
+- [x] New error type + UI error key + translation strings (en/ar).
+- [x] Data repair script `scripts/repair-simulated-daily-interest-cmudeva3t.ts`
+      for investment cmudeva3t000zmn01z8gr3ntx: reverses every DAILY_INTEREST
+      transaction via the existing `reverseLedgerTransaction` (manual
+      -adjustment.ts) — confirmed with Zac that Oct 1 was this investment's
+      very first entry ever, so ALL of Oct 1–Dec 28 gets reversed, not just
+      Dec 26-28. Append-only (no deletes), idempotent (skips
+      already-reversed transactions on re-run).
+- [ ] Zac to run the repair script against production (I only have the dev
+      DB), then re-run `runReconciliation()` as proof.
+- [x] Tests added: refuses past-today, allows exactly-on-today (boundary
+      inclusive), repeated chained calls still bounded.
+- [x] tsc --noEmit clean.
+- [x] Full suite: Docker eventually came up. 58/60 files, 634/637 tests
+      passed, 1 skipped. developer-tools.test.ts: 27/27 green (including
+      the 3 new safety-cap tests), reconciliation.test.ts green. The 2
+      failures (admin-overview.test.ts's "newThisMonth" assertion,
+      security-headers.test.ts's /en/login timeout) are both pre-existing
+      and unrelated — confirmed by stashing this session's changes and
+      re-running against unmodified code: admin-overview fails identically
+      with zero diff applied; security-headers passed clean on its own
+      retry (a flaky 20s timeout, not a real failure).
+- [x] Lessons.md entry added (2026-09-30).
+- [x] Commit + push.

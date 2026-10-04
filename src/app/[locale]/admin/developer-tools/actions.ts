@@ -12,6 +12,7 @@ import {
   simulateDailyInterestDays,
   InvestmentNotFoundError,
   InvalidSimulationDaysError,
+  SimulationWouldExceedTodayError,
 } from "@/lib/developer-tools";
 import { searchUsers } from "@/lib/user-management";
 import { UnknownJobTypeError, type JobType } from "@/lib/job-monitor";
@@ -22,12 +23,14 @@ export type DeveloperToolsErrorKey =
   | "errorForbidden"
   | "errorInvestmentNotFound"
   | "errorInvalidDays"
+  | "errorSimulationWouldExceedToday"
   | "errorGeneric";
 
 function mapError(err: unknown): DeveloperToolsErrorKey {
   if (err instanceof UnknownJobTypeError) return "errorUnknownJob";
   if (err instanceof InvestmentNotFoundError) return "errorInvestmentNotFound";
   if (err instanceof InvalidSimulationDaysError) return "errorInvalidDays";
+  if (err instanceof SimulationWouldExceedTodayError) return "errorSimulationWouldExceedToday";
   if (err instanceof Error && /forbidden/i.test(err.message)) return "errorForbidden";
   return "errorGeneric";
 }
@@ -249,7 +252,7 @@ export async function simulateDailyInterestAction(
 ): Promise<SimulateDailyInterestResult> {
   try {
     const actor = await requirePermission("DEVELOPER_TOOLS", new Date());
-    const summary = await simulateDailyInterestDays(actor.id, investmentId, days);
+    const summary = await simulateDailyInterestDays(actor.id, investmentId, days, new Date());
     revalidatePath(`/${locale}/admin/developer-tools`);
     return {
       ok: true,

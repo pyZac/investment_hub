@@ -105,6 +105,13 @@ export class InvalidSimulationDaysError extends Error {
   }
 }
 
+export class SimulationWouldExceedTodayError extends Error {
+  constructor() {
+    super("This simulation would post dates beyond today — reduce the number of days.");
+    this.name = "SimulationWouldExceedTodayError";
+  }
+}
+
 export type SimulationInvestmentSummary = {
   id: string;
   ownerName: string;
@@ -317,17 +324,27 @@ async function findNextSimulationStartDate(investment: {
  * attributability as any other financial admin action (invariant #8),
  * arguably more so given the backdated-date nature of what it does.
  *
- * No `today`/`forDate` parameter: the simulated range is entirely
- * determined by this investment's own ledger history (see
- * `findNextSimulationStartDate`), never by the real current date — invariant
- * #4 ("never call `new Date()` internally") is satisfied vacuously here
- * since no wall-clock date is needed at all, only dates read back from
- * already-persisted rows.
+ * Takes `today` ONLY as an upper bound (invariant #4: caller-supplied, never
+ * `new Date()` internally) — it never affects where the range STARTS (that
+ * stays entirely determined by this investment's own ledger history, see
+ * `findNextSimulationStartDate`), only whether the computed END date is
+ * allowed. Added after a real incident: nothing previously stopped repeated
+ * clicks from chaining forward past the real current date — three manual
+ * 30-day simulations in a row (each one correctly continuing from where the
+ * last one left off, by design) pushed one investment's ledger 90 days into
+ * the future, meaning the real daily cron then found every date through
+ * that point "already processed" and posted nothing for three months,
+ * which is exactly the "no new profit entries" symptom that gets reported
+ * as a scheduler bug when it is actually this tool having no upper bound.
+ * Refuses outright (nothing written) rather than silently truncating `days`
+ * — a silent truncation would make the admin's "N days" input lie about
+ * what actually got simulated.
  */
 export async function simulateDailyInterestDays(
   actingAdminId: string,
   investmentId: string,
   days: number,
+  today: Date,
 ): Promise<SimulateDailyInterestResult> {
   await assertHasDeveloperToolsPermission(actingAdminId);
 
@@ -342,6 +359,10 @@ export async function simulateDailyInterestDays(
 
   const startDate = await findNextSimulationStartDate(investment);
   const endDate = new Date(startDate.getTime() + (days - 1) * MS_PER_DAY);
+
+  if (endDate > today) {
+    throw new SimulationWouldExceedTodayError();
+  }
 
   let entriesPosted = 0;
   let totalCredited = new Prisma.Decimal(0);
