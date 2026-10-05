@@ -5,6 +5,7 @@ import { postTransaction } from "./ledger-transaction";
 import { payDirectCommissionInTx } from "./direct-commission";
 import { rollupBvForPurchase } from "./binary-tree";
 import { accrueMrvForPurchase } from "./rank";
+import { DAY_MS, startOfDubaiDay } from "./business-day";
 
 const purchasePackageInputSchema = z.object({
   packageId: z.string(),
@@ -174,4 +175,114 @@ export async function listActiveInvestmentsForUser(userId: string) {
 export function daysUntil(target: Date, now: Date): number {
   const msRemaining = target.getTime() - now.getTime();
   return Math.max(0, Math.ceil(msRemaining / (24 * 60 * 60 * 1000)));
+}
+
+export type InvestmentProfitBreakdownRow = {
+  investmentId: string;
+  packageName: string;
+  amount: Prisma.Decimal;
+  purchasedAt: Date;
+  todayProfit: Prisma.Decimal;
+  totalProfit: Prisma.Decimal;
+};
+
+/**
+ * Per-investment profit figures for the dashboard's breakdown section — the
+ * per-investment counterpart to `getTodayInterestCreditA`/
+ * `getDailyInterestHistoryA` (wallets.ts), which only ever aggregate across
+ * ALL of a user's investments. Scoped to the caller's own ACTIVE investments
+ * only (reuses `listActiveInvestmentsForUser` — ownership enforced by
+ * construction, invariant #9, no separate target-user param exists here any
+ * more than it does there).
+ *
+ * `todayProfit`: sum of DAILY_INTEREST CREDIT entries for that investment
+ * whose `createdAt` falls in the Dubai business day containing `forDate` —
+ * same day-boundary convention as `getTodayInterestCreditA` (`startOfDubaiDay`
+ * from business-day.ts, never a raw UTC slice, per the standing
+ * dubaiDayKey/startOfDubaiDay rule in tasks/lessons.md).
+ *
+ * `totalProfit`: sum of every DAILY_INTEREST CREDIT ever posted for that
+ * investment, minus any reversal of one. A DAILY_INTEREST reversal (the only
+ * write path is `reverseLedgerTransaction`, manual-adjustment.ts) is NOT
+ * tagged `entryType: "DAILY_INTEREST"` and does NOT share the original
+ * entry's `referenceType: "investment"` scoping — it's posted as
+ * `entryType: "ADMIN_ADJUSTMENT"`, `referenceType: "manual_adjustment"`,
+ * with `referenceId` set to the ORIGINAL transaction's idempotencyKey
+ * (`daily_interest:{userId}:{investmentId}:{date}`). A plain
+ * `referenceType: "investment", referenceId: investmentId` filter on
+ * DAILY_INTEREST credits alone would silently miss every reversal and
+ * overstate total profit for any investment a repair script has touched —
+ * confirmed this is a REAL, not hypothetical, scenario in this project's own
+ * history (see tasks/lessons.md, 2026-09-30 entry on investment
+ * cmudeva3t000zmn01z8gr3ntx). Reversals are found by matching
+ * `referenceType: "manual_adjustment"` rows whose `referenceId` starts with
+ * this investment's own idempotency-key prefix, not by any shared reference
+ * scope with the originals.
+ *
+ * Takes `forDate` as a parameter and never calls `new Date()` internally
+ * (invariant #4).
+ */
+export async function getInvestmentProfitBreakdownForUser(
+  userId: string,
+  forDate: Date,
+): Promise<InvestmentProfitBreakdownRow[]> {
+  const activeInvestments = await listActiveInvestmentsForUser(userId);
+  if (activeInvestments.length === 0) {
+    return [];
+  }
+
+  const startOfToday = startOfDubaiDay(forDate);
+  const startOfTomorrow = new Date(startOfToday.getTime() + DAY_MS);
+
+  return Promise.all(
+    activeInvestments.map(async (investment) => {
+      const idempotencyKeyPrefix = `daily_interest:${userId}:${investment.id}:`;
+
+      const [todayResult, totalCreditResult, reversalEntries] = await Promise.all([
+        prisma.ledgerEntry.aggregate({
+          where: {
+            referenceType: "investment",
+            referenceId: investment.id,
+            entryType: "DAILY_INTEREST",
+            wallet: "A",
+            direction: "CREDIT",
+            createdAt: { gte: startOfToday, lt: startOfTomorrow },
+          },
+          _sum: { amount: true },
+        }),
+        prisma.ledgerEntry.aggregate({
+          where: {
+            referenceType: "investment",
+            referenceId: investment.id,
+            entryType: "DAILY_INTEREST",
+            wallet: "A",
+            direction: "CREDIT",
+          },
+          _sum: { amount: true },
+        }),
+        prisma.ledgerEntry.findMany({
+          where: {
+            referenceType: "manual_adjustment",
+            referenceId: { startsWith: idempotencyKeyPrefix },
+            wallet: "A",
+            direction: "DEBIT",
+          },
+          select: { amount: true },
+        }),
+      ]);
+
+      const zero = new Prisma.Decimal(0);
+      const totalCredited = totalCreditResult._sum.amount ?? zero;
+      const totalReversed = reversalEntries.reduce((sum, entry) => sum.add(entry.amount), zero);
+
+      return {
+        investmentId: investment.id,
+        packageName: investment.package.name,
+        amount: investment.amount,
+        purchasedAt: investment.purchasedAt,
+        todayProfit: todayResult._sum.amount ?? zero,
+        totalProfit: totalCredited.sub(totalReversed),
+      };
+    }),
+  );
 }

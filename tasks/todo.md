@@ -1,55 +1,59 @@
-# Session: Daily Interest simulator pushed investment 90 days into the future
+# Session: Per-investment profit breakdown on the user dashboard — DONE
 
-## Findings (confirmed against real production data)
-
-**Bug 2 ("duplicate entries") does NOT exist.** The two rows per date the
-user flagged are the normal, correct double-entry pair: wallet=A/CREDIT and
-wallet=SYSTEM_EXTERNAL/DEBIT, same amount (by design — debits=credits),
-~5ms apart (two sequential `create()` calls inside one `$transaction`).
-Confirmed directly from real column data. No code change needed for this.
-
-**Bug 1 is real, and bigger than reported.** Three manual "Simulate 30 days"
-clicks on 2026-09-29 (09:13:40, 09:20:33, 09:20:53 — ~7min then ~20s apart)
-each correctly chained forward from the investment's current last-posted
-date (by design — that's last session's fix for the "posts 0 entries" bug).
-But nothing capped the total at real "today" — three clicks of 30 days each
-pushed the investment's ledger to 2026-12-28, 90 days past where real time
-actually is (2026-09-29/30). The real daily cron now finds this investment
-"already processed" through Dec 28 and correctly posts nothing — which IS
-the original "no new profit entries after Oct 1" symptom, fully explained,
-no scheduler bug needed.
-
-Root cause: `simulateDailyInterestDays` has no upper bound relative to the
-real current date, and the UI gives no warning that a click chains forward
-from wherever the ledger already is, not from "today."
-
-## Plan — DONE (except running against production, which only Zac can do)
-
-- [x] Add a safety cap: `simulateDailyInterestDays` now takes `today` again
-      and refuses (SimulationWouldExceedTodayError, nothing written) if the
-      computed `endDate` would land beyond it. Start date is still always
-      last-entry+1, untouched.
-- [x] New error type + UI error key + translation strings (en/ar).
-- [x] Data repair script `scripts/repair-simulated-daily-interest-cmudeva3t.ts`
-      for investment cmudeva3t000zmn01z8gr3ntx: reverses every DAILY_INTEREST
-      transaction via the existing `reverseLedgerTransaction` (manual
-      -adjustment.ts) — confirmed with Zac that Oct 1 was this investment's
-      very first entry ever, so ALL of Oct 1–Dec 28 gets reversed, not just
-      Dec 26-28. Append-only (no deletes), idempotent (skips
-      already-reversed transactions on re-run).
-- [ ] Zac to run the repair script against production (I only have the dev
-      DB), then re-run `runReconciliation()` as proof.
-- [x] Tests added: refuses past-today, allows exactly-on-today (boundary
-      inclusive), repeated chained calls still bounded.
+## Plan
+- [x] New `getInvestmentProfitBreakdownForUser(userId, forDate)` in
+      investments.ts: per-active-investment `todayProfit` (Dubai business
+      day, via `startOfDubaiDay`) and `totalProfit` (all DAILY_INTEREST
+      CREDIT minus any reversal). Ownership-scoped via
+      `listActiveInvestmentsForUser` — no admin bypass.
+- [x] Real finding, not assumed: a DAILY_INTEREST reversal (the only write
+      path is `reverseLedgerTransaction`, manual-adjustment.ts) is NOT
+      tagged `referenceType: "investment"` like the original — it's
+      `entryType: "ADMIN_ADJUSTMENT"`, `referenceType: "manual_adjustment"`,
+      `referenceId` = the ORIGINAL idempotencyKey. A naive
+      `referenceType: "investment"` filter on "total profit" would have
+      silently ignored every reversal (ticket's own wording named a
+      "REVERSAL" entryType that doesn't exist in the schema at all).
+      Reversals are found by `referenceType: "manual_adjustment"` +
+      `referenceId` prefix-matching the investment's own idempotency-key
+      format. Verified this is a REAL scenario, not hypothetical — exactly
+      this reversal happened to investment cmudeva3t000zmn01z8gr3ntx last
+      session (tasks/lessons.md, 2026-09-30 entry).
+- [x] New `ProfitBreakdownPanel` Server Component — row-card list (not a
+      raw `<table>`), matching `TransactionList`/`InvestmentList`'s
+      established pattern. Package name + amount shown together (name is
+      an admin-chosen label, not necessarily the dollar figure).
+- [x] Wired into dashboard/page.tsx between the wallet cards grid and the
+      chart card. Did not touch `getTodayInterestCreditA`/
+      `getDailyInterestHistoryA`/the chart — both untouched, per the
+      ticket's explicit "do not change" instruction.
+- [x] EN/AR translations added (Dashboard namespace). Package name stays
+      untranslated (proper noun), "package"/dates/labels translated,
+      Western numerals throughout, `dir="ltr"` on every amount span,
+      `text-end` (logical) for numeric-column alignment.
+- [x] Tests: 7 new tests in investment-profit-breakdown.test.ts — empty
+      case, basic fields, CAPITAL_RELEASED exclusion, Dubai-day boundary
+      (fixture near the UTC/Dubai edge, per the standing lesson), reversal
+      subtraction (the critical case), cross-user isolation, multi
+      -investment independence. All pass.
+- [x] Live verification against the real running app (no browser-driving
+      tool available in this environment — used a scratch script: real
+      user, real purchases, real seeded credits, real HTTP login, fetched
+      the real rendered HTML for both /en/dashboard and /ar/dashboard).
+      Confirmed: both package names render, both profit figures render
+      correctly formatted, correct heading per locale, no locale leaking
+      the other's text, dir="ltr" wrapping present in the actual HTML,
+      Arabic translation and Western numerals confirmed in the real
+      response body. Scratch script + its test data fully cleaned up
+      afterward (investments, ledger entries via
+      cleanupLedgerEntriesForUsers, packages, sessions, wallets, security
+      questions, users — verified 0 remaining).
 - [x] tsc --noEmit clean.
-- [x] Full suite: Docker eventually came up. 58/60 files, 634/637 tests
-      passed, 1 skipped. developer-tools.test.ts: 27/27 green (including
-      the 3 new safety-cap tests), reconciliation.test.ts green. The 2
-      failures (admin-overview.test.ts's "newThisMonth" assertion,
-      security-headers.test.ts's /en/login timeout) are both pre-existing
-      and unrelated — confirmed by stashing this session's changes and
-      re-running against unmodified code: admin-overview fails identically
-      with zero diff applied; security-headers passed clean on its own
-      retry (a flaky 20s timeout, not a real failure).
-- [x] Lessons.md entry added (2026-09-30).
-- [x] Commit + push.
+- [x] Full suite: 3 failures, all confirmed pre-existing/unrelated —
+      admin-overview.test.ts and security-headers.test.ts are the same two
+      flaky/pre-existing failures from the prior session; rank.test.ts's
+      timeout (new this run) was re-verified in isolation alongside the
+      new test file and passed clean in 5876ms — confirmed suite-load
+      flakiness (the standing CPU-bound-under-parallel-load pattern), not
+      a regression; neither file touches anything this session changed.
+- [ ] Commit + push.

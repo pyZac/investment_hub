@@ -2103,3 +2103,40 @@ designed in from the start — any future "replay/catch-up/simulate forward"
 tool in this codebase should get an explicit "how far can this possibly
 run" bound in its own first design pass, not just an idempotency guarantee
 against re-running the same range twice.
+
+## 2026-10-05 — post-phase (dashboard per-investment profit breakdown)
+Note (not a mistake — a real schema/ticket-wording mismatch caught before
+writing the query, worth recording since it will recur for any future
+"total X minus reversals" feature). The ticket asked for "total profit
+earned to date... minus any REVERSAL entries" — `REVERSAL` is not a real
+`LedgerEntryType` in this schema at all (checked `schema.prisma`'s enum
+directly before trusting the wording, per the standing "verify a ticket's
+claimed field/function exists" rule — see the SCRUM-109/Developer-Tools
+-report entries above, same discipline, different artifact). The only
+reversal write path, `reverseLedgerTransaction` (manual-adjustment.ts),
+posts `entryType: "ADMIN_ADJUSTMENT"`, `referenceType: "manual_adjustment"`,
+with `referenceId` set to the ORIGINAL transaction's idempotencyKey — it
+does NOT share the original DAILY_INTEREST entry's `referenceType:
+"investment"` scoping. A naive `referenceType: "investment", entryType:
+"DAILY_INTEREST"` sum would silently never see a reversal and overstate
+total profit for any investment a repair script has touched. Confirmed
+this is a live, real scenario, not a hypothetical edge case: exactly this
+reversal was applied to investment `cmudeva3t000zmn01z8gr3ntx` in the
+immediately preceding session (see the 2026-09-30 entry above) — so the
+feature had a concrete real-world test case ready-made from this
+project's own recent history. `getInvestmentProfitBreakdownForUser`
+(investments.ts) finds reversals by matching `referenceType:
+"manual_adjustment"` rows whose `referenceId` starts with the investment's
+own idempotency-key prefix (`daily_interest:{userId}:{investmentId}:`),
+not by any shared reference scope with the originals.
+Rule: **any future "sum X, net of reversals/adjustments" query must trace
+the actual reversal write path's `entryType`/`referenceType`/`referenceId`
+shape before writing the filter** — a reversal is not guaranteed to share
+the original transaction's reference scope just because it conceptually
+"belongs" to the same business object; in this codebase it specifically
+does not, by `reverseLedgerTransaction`'s own design (the reversal's
+`referenceId` points at the ORIGINAL idempotencyKey as its own identifier,
+not at the business object the original referenced). When a ticket names
+an entry-type/field that isn't in the Prisma schema, treat it as a wording
+slip to resolve against the schema, not a fact to build around (same
+pattern as the directRate/months-vs-weeks SCRUM-109 lesson above).

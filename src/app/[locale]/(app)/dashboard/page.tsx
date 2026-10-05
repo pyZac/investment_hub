@@ -2,7 +2,11 @@ import { TrendingUp } from "lucide-react";
 import { getLocale, getTranslations } from "next-intl/server";
 import { requireSessionOrRedirect } from "@/lib/page-guard";
 import { getDailyInterestHistoryA, getTodayInterestCreditA, getWalletOverview } from "@/lib/wallets";
-import { listActiveInvestmentsForUser, listInvestmentsForUser } from "@/lib/investments";
+import {
+  getInvestmentProfitBreakdownForUser,
+  listActiveInvestmentsForUser,
+  listInvestmentsForUser,
+} from "@/lib/investments";
 import { buildDailyProfitSeries } from "@/lib/daily-profit-series";
 import {
   getMyLatestBinaryCycle,
@@ -14,6 +18,7 @@ import { toDisplay, toDisplayWithCurrency } from "@/lib/display";
 import { WalletCard, TodayProfitFooter } from "@/components/wallet-card";
 import { DailyProfitChart } from "@/components/daily-profit-chart";
 import { InvestmentsPanel } from "@/components/investments-panel";
+import { ProfitBreakdownPanel } from "@/components/profit-breakdown-panel";
 import { BinaryPanel, type DashboardBinaryCycle } from "@/components/binary-panel";
 import { RankProgressPanel, type DashboardRankProgress } from "@/components/rank-progress-panel";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardAction } from "@/components/ui/card";
@@ -28,12 +33,13 @@ export default async function DashboardPage() {
   const user = await requireSessionOrRedirect(new Date());
   const now = new Date();
 
-  const [wallets, todayProfitA, investments, activeInvestments, latestBinaryCycle, rankProgress] =
+  const [wallets, todayProfitA, investments, activeInvestments, profitBreakdown, latestBinaryCycle, rankProgress] =
     await Promise.all([
       getWalletOverview(user.id),
       getTodayInterestCreditA(user.id, now),
       listInvestmentsForUser(user.id),
       listActiveInvestmentsForUser(user.id),
+      getInvestmentProfitBreakdownForUser(user.id, now),
       getMyLatestBinaryCycle(user.id),
       getRankProgressForUser(user.id, now),
     ]);
@@ -97,6 +103,16 @@ export default async function DashboardPage() {
           amount={toDisplayWithCurrency(wallets.SAVING)}
         />
       </div>
+
+      <Card className="border-border/60">
+        <CardHeader>
+          <CardTitle className="text-base font-medium">{t("profitBreakdownHeading")}</CardTitle>
+          <CardDescription>{t("profitBreakdownDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ProfitBreakdownPanel rows={profitBreakdown} locale={locale} />
+        </CardContent>
+      </Card>
 
       <Card className="border-border/60">
         <CardHeader>
