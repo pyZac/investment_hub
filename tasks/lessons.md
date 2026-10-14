@@ -2140,3 +2140,106 @@ not at the business object the original referenced). When a ticket names
 an entry-type/field that isn't in the Prisma schema, treat it as a wording
 slip to resolve against the schema, not a fact to build around (same
 pattern as the directRate/months-vs-weeks SCRUM-109 lesson above).
+
+## 2026-10-06 — pre-launch (scripts/reset-platform-data.ts)
+Note (not a mistake — a real DB-level blocker confirmed before it would
+have failed in production, worth recording as the standing contract for
+any future script that deletes ledger_entries wholesale). A plain
+`prisma.ledgerEntry.deleteMany({})` against this schema is NOT just
+"inadvisable per invariant #2" — it is a hard DB-level failure: a trigger
+named `ledger_entries_no_delete` unconditionally rejects every DELETE on
+that table (Postgres error P0001, "ledger_entries is append-only: DELETE
+is not allowed"), confirmed by actually running it against dev and
+reading the real error, not assumed from the invariant's wording alone.
+`developer-tools.test.ts`'s own cleanup already has the sanctioned way
+through it: `ALTER TABLE ledger_entries DISABLE/ENABLE TRIGGER
+ledger_entries_no_delete` via `$executeRawUnsafe` with a fixed, non
+-interpolated literal string — reused verbatim in the reset script rather
+than inventing a second bypass, and documented as the one deliberate,
+narrow exception to invariant #10 ("$executeRawUnsafe is never used") this
+codebase already has a precedent for, not a new one introduced casually.
+Separately confirmed (also by actually running it, not assumed): a single
+`deleteMany` covering an entire self-referencing RESTRICT set
+(`binary_nodes.parent_id`) succeeds in one statement even though parent
+and child rows are removed together — Postgres evaluates a RESTRICT FK
+against the POST-statement state for one DELETE command, not row-by-row
+mid-statement, verified directly against a throwaway RESTRICT table
+before trusting it for the real table (same conclusion the Phase 7
+binary_nodes lesson already reached for ordered deletes, now confirmed to
+extend to a single batched delete too).
+Rule: (1) **any future script that needs to delete `ledger_entries` rows
+wholesale (not a single reversal via `reverseLedgerTransaction`) must
+disable/re-enable `ledger_entries_no_delete` around exactly that step,
+in a `finally` so a crash mid-script can never leave the trigger
+permanently off for every other caller** — this is now the established,
+narrow exception to invariant #10, not a new one to re-justify each time.
+(2) **Before writing a bulk-delete script from a ticket's own listed
+tables, read the FULL schema for every FK referencing the tables named**
+— this ticket's own 8-step list omitted at least 14 tables
+(SecurityEvent, PendingAuth, Session, SecurityQuestion,
+AdminPermissionGrant, WalletTransfer, WithdrawalRequest, SavingLot,
+BinaryNode, BvEntry, MrvPeriod, RankAward, RankForfeit, BinaryCycle) that
+all reference User and would have blocked a naive user-deletion loop;
+`grep -n "^model \|onDelete"` across schema.prisma first is cheap
+insurance against discovering a RESTRICT failure mid-run against a real
+target database. (3) Before trusting ANY such script against a real
+target, run both `--dry-run` and `--execute` against the local dev DB
+first and verify the actual row counts and final state directly (not
+just `tsc --noEmit` passing) — this is the same "verify, don't assume"
+discipline as every other lesson in this file, applied here to a
+script whose failure mode (partial deletion under FK ordering, or a
+silently-skipped step) would be far harder to detect and repair than a
+failed test assertion.
+
+## 2026-10-14 — post-phase (accrueDailyInterestForInvestment's profitStartsAt comparison, a 4th instance of the UTC-vs-Dubai boundary bug class)
+Mistake: `forDate < investment.profitStartsAt` in daily-interest.ts was a
+plain instant comparison. `profitStartsAt = purchasedAt + 7 days` preserves
+`purchasedAt`'s real (non-midnight) time-of-day for any real purchase, but
+the real scheduler's `forDate` is always Dubai-midnight-aligned — so a
+purchase made at any time other than exactly midnight caused the
+investment's correct first eligible day (day 8) to be wrongly skipped as
+"before_profit_start." Invisible to the entire existing test suite because
+every single fixture in daily-interest.test.ts used an exact-midnight
+`purchasedAt` — this is now the FOURTH documented instance in this project
+of "a test suite built entirely from midnight/noon-aligned instants hides
+a real UTC-vs-Dubai boundary bug" (see the SCRUM-92-follow-up and SCRUM-80
+entries above for the first two, plus the general rule already stated
+there). The bug report itself proposed fixing it with a plain UTC-day
+comparison (`startOfUtcDay`) — traced a concrete counter-example
+(investment purchased at 01:00 Asia/Dubai) where the UTC-day version gives
+the OPPOSITE wrong answer (one real day too EARLY instead of too late)
+versus a Dubai-day comparison, before implementing either. Fixed with
+`startOfDubaiDay(forDate) < startOfDubaiDay(investment.profitStartsAt)`
+instead — consistent with every other boundary already resolved in Dubai
+terms in this same file (`isFriday`, `dailyRate`).
+Separately: while verifying the fix, `phase-4-exit-test.test.ts` failed
+ONCE on an early combined run with a wrong total balance. Did not assume
+either "the fix is wrong" or "it's just flaky" — isolated the exact 90-day
+scenario in a standalone debug script outside vitest entirely and got
+IDENTICAL results from the old and new code, then re-ran the real test
+file (alone, combined with daily-interest-job.test.ts, and in the full
+suite) multiple times with the fix in place — all passed clean every time
+after that first run. Concluded this was a one-off DB-state artifact from
+the debugging session itself (a scratch job_runs-inspection script had
+just run moments before), not a real regression, only after failing to
+reproduce it across 4 independent re-runs with a real isolated repro
+attempt in between — matches the standing "a clean retry alone doesn't
+excuse a race; isolate and reproduce deliberately before believing either
+story" discipline already in this file (SCRUM-61/SCRUM-79 entries).
+Rule: (1) **a bug report's own proposed fix is a hypothesis to verify
+against the rest of the engine's conventions, not a given** — this report's
+suggested `startOfUtcDay` would have introduced a NEW, opposite-direction
+timezone bug while fixing the reported one, for any investment purchased
+during the ~4-hour UTC window that falls on a different Dubai calendar day.
+Trace a concrete boundary case numerically before picking between two
+plausible-looking fixes when the codebase has an established timezone
+convention (Dubai business days) that one option matches and the other
+doesn't. (2) **Add this to the standing checklist**: any new or modified
+boundary comparison involving a `DateTime` column that can carry a
+non-midnight time-of-day (`profitStartsAt`, `capitalUnlocksAt`, anything
+derived from a real `purchasedAt`/`createdAt` by adding a fixed offset)
+needs at least one test fixture with a genuinely non-midnight base instant
+— the existing "test near the UTC/Dubai day-boundary edge" rule already
+covers choosing WHEN near midnight to test; this adds WHICH fields need a
+non-midnight fixture in the first place (anything derived by adding days/
+months to a real timestamp, not just raw `forDate` arguments).

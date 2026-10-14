@@ -105,6 +105,45 @@ describe("accrueDailyInterestForInvestment", () => {
     expect(entries).toHaveLength(0);
   });
 
+  it("does NOT skip day 8 when profitStartsAt carries a non-midnight time-of-day (real-purchase-time regression)", async () => {
+    const user = await makeUser();
+    // A real purchase almost never lands exactly on UTC midnight. purchasedAt
+    // 2026-10-06T10:22:52.000Z -> profitStartsAt 2026-10-13T10:22:52.000Z
+    // (same time-of-day, 7 days later). The real scheduler always passes a
+    // midnight-UTC forDate (daily-interest-job.ts truncates via
+    // startOfUtcDay), so the FIRST real cron call for day 8 is
+    // 2026-10-13T00:00:00.000Z — a plain `forDate < profitStartsAt`
+    // comparison would wrongly see 00:00 < 10:22 and skip day 8 entirely.
+    const purchasedAt = new Date("2026-10-06T10:22:52.000Z");
+    const investment = await makeInvestment(user.id, "1000", purchasedAt);
+
+    const forDate = new Date("2026-10-13T00:00:00.000Z");
+    const result = await accrueDailyInterestForInvestment(investment.id, forDate);
+
+    expect(result.skipped).toBe(false);
+    if (result.skipped) throw new Error("unreachable");
+
+    const idempotencyKey = `daily_interest:${user.id}:${investment.id}:2026-10-13`;
+    const entries = await prisma.ledgerEntry.findMany({ where: { idempotencyKey } });
+    expect(entries).toHaveLength(2);
+  });
+
+  it("still skips the day BEFORE profitStartsAt's own Dubai business day, even with a non-midnight time-of-day", async () => {
+    const user = await makeUser();
+    const purchasedAt = new Date("2026-10-06T10:22:52.000Z");
+    // profitStartsAt = 2026-10-13T10:22:52.000Z — Dubai business day 2026-10-13.
+    const investment = await makeInvestment(user.id, "1000", purchasedAt);
+
+    // Day 7 (2026-10-12), midnight UTC — the real scheduler's forDate the
+    // day before profitStartsAt's own Dubai business day. Must still skip.
+    const forDate = new Date("2026-10-12T00:00:00.000Z");
+    const result = await accrueDailyInterestForInvestment(investment.id, forDate);
+
+    expect(result.skipped).toBe(true);
+    if (!result.skipped) throw new Error("unreachable");
+    expect(result.reason).toBe("before_profit_start");
+  });
+
   it("skips entirely on a Friday, not accrued at zero", async () => {
     const user = await makeUser();
     // purchased 2026-08-01 -> profitStartsAt 2026-08-08, well before the Friday tested.

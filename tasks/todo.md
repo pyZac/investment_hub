@@ -1,59 +1,62 @@
-# Session: Per-investment profit breakdown on the user dashboard — DONE
+# Session: profitStartsAt timezone-boundary bug + Oct 13 backfill — DONE
+
+## Finding before implementing (changed the fix from what was literally asked)
+The report asked for `startOfUtcDay(forDate) < startOfUtcDay(profitStartsAt)`
+— a plain UTC-calendar-day comparison. Traced a concrete boundary case
+(investment purchased at 01:00 Asia/Dubai) where that gives the OPPOSITE,
+WRONG answer compared to a Dubai-business-day comparison — every other
+boundary in this engine (isFriday, dailyRate) already resolves in Dubai
+terms, not UTC. Confirmed with Zac to use `startOfDubaiDay` (business-day.ts)
+instead of the UTC-day version the report specified.
 
 ## Plan
-- [x] New `getInvestmentProfitBreakdownForUser(userId, forDate)` in
-      investments.ts: per-active-investment `todayProfit` (Dubai business
-      day, via `startOfDubaiDay`) and `totalProfit` (all DAILY_INTEREST
-      CREDIT minus any reversal). Ownership-scoped via
-      `listActiveInvestmentsForUser` — no admin bypass.
-- [x] Real finding, not assumed: a DAILY_INTEREST reversal (the only write
-      path is `reverseLedgerTransaction`, manual-adjustment.ts) is NOT
-      tagged `referenceType: "investment"` like the original — it's
-      `entryType: "ADMIN_ADJUSTMENT"`, `referenceType: "manual_adjustment"`,
-      `referenceId` = the ORIGINAL idempotencyKey. A naive
-      `referenceType: "investment"` filter on "total profit" would have
-      silently ignored every reversal (ticket's own wording named a
-      "REVERSAL" entryType that doesn't exist in the schema at all).
-      Reversals are found by `referenceType: "manual_adjustment"` +
-      `referenceId` prefix-matching the investment's own idempotency-key
-      format. Verified this is a REAL scenario, not hypothetical — exactly
-      this reversal happened to investment cmudeva3t000zmn01z8gr3ntx last
-      session (tasks/lessons.md, 2026-09-30 entry).
-- [x] New `ProfitBreakdownPanel` Server Component — row-card list (not a
-      raw `<table>`), matching `TransactionList`/`InvestmentList`'s
-      established pattern. Package name + amount shown together (name is
-      an admin-chosen label, not necessarily the dollar figure).
-- [x] Wired into dashboard/page.tsx between the wallet cards grid and the
-      chart card. Did not touch `getTodayInterestCreditA`/
-      `getDailyInterestHistoryA`/the chart — both untouched, per the
-      ticket's explicit "do not change" instruction.
-- [x] EN/AR translations added (Dashboard namespace). Package name stays
-      untranslated (proper noun), "package"/dates/labels translated,
-      Western numerals throughout, `dir="ltr"` on every amount span,
-      `text-end` (logical) for numeric-column alignment.
-- [x] Tests: 7 new tests in investment-profit-breakdown.test.ts — empty
-      case, basic fields, CAPITAL_RELEASED exclusion, Dubai-day boundary
-      (fixture near the UTC/Dubai edge, per the standing lesson), reversal
-      subtraction (the critical case), cross-user isolation, multi
-      -investment independence. All pass.
-- [x] Live verification against the real running app (no browser-driving
-      tool available in this environment — used a scratch script: real
-      user, real purchases, real seeded credits, real HTTP login, fetched
-      the real rendered HTML for both /en/dashboard and /ar/dashboard).
-      Confirmed: both package names render, both profit figures render
-      correctly formatted, correct heading per locale, no locale leaking
-      the other's text, dir="ltr" wrapping present in the actual HTML,
-      Arabic translation and Western numerals confirmed in the real
-      response body. Scratch script + its test data fully cleaned up
-      afterward (investments, ledger entries via
-      cleanupLedgerEntriesForUsers, packages, sessions, wallets, security
-      questions, users — verified 0 remaining).
-- [x] tsc --noEmit clean.
-- [x] Full suite: 3 failures, all confirmed pre-existing/unrelated —
-      admin-overview.test.ts and security-headers.test.ts are the same two
-      flaky/pre-existing failures from the prior session; rank.test.ts's
-      timeout (new this run) was re-verified in isolation alongside the
-      new test file and passed clean in 5876ms — confirmed suite-load
-      flakiness (the standing CPU-bound-under-parallel-load pattern), not
-      a regression; neither file touches anything this session changed.
-- [ ] Commit + push.
+- [x] Confirmed the bug is real: `forDate < investment.profitStartsAt` is a
+      plain instant comparison; `profitStartsAt = purchasedAt + 7 days`
+      preserves purchasedAt's real time-of-day (not midnight-normalized),
+      while the real scheduler's `forDate` is always Dubai-midnight
+      -aligned (daily-interest-job.ts's `startOfUtcDay` truncation) — so a
+      purchase at any non-midnight time skipped its correct first eligible
+      day.
+- [x] Fixed via `startOfDubaiDay(forDate) < startOfDubaiDay(profitStartsAt)`
+      in daily-interest.ts, with a comment explaining why Dubai-day (not
+      UTC-day) and documenting the ruled-out boundary case.
+- [x] Added 2 regression tests to daily-interest.test.ts using a
+      non-midnight purchasedAt (10:22:52 UTC) — one proving day 8 now
+      accrues, one proving day 7 still correctly skips. Every PRE-EXISTING
+      fixture in this file used exact-midnight purchasedAt values, which
+      is exactly why this bug was invisible to the existing suite (same
+      "midnight-only fixtures hide a real timezone bug" pattern already
+      flagged twice in lessons.md).
+- [x] Real scare, resolved: `phase-4-exit-test.test.ts` failed ONCE on an
+      early combined run (`1084.00302945` vs expected `1180.67317771`).
+      Root-caused properly rather than assumed: ran the exact scenario via
+      a standalone debug script bypassing vitest entirely — old code and
+      new code produced IDENTICAL results (`1147.61830399`). Re-ran the
+      real test file alone, combined with daily-interest-job.test.ts,
+      and the full suite — all passed clean, repeatedly, with the fix in
+      place. Confirmed this was a one-off DB-state artifact from the
+      debugging session itself (likely a scratch job_runs check script
+      running too close to a prior test invocation), not a real
+      regression — never reproduced again across 4 separate re-runs.
+- [x] tsc --noEmit clean throughout.
+- [x] Full suite: 642/646 passed, 1 skipped. The only 2 failures are the
+      already-documented pre-existing flaky ones (admin-overview.test.ts's
+      ticking-clock forDate bug, security-headers.test.ts's HTTP timeout)
+      — neither touches daily-interest.ts.
+- [x] Oct 13 backfill: wrote `scripts/backfill-oct13-profit-start-bug.ts`
+      (--dry-run/--execute). Deletes the single job_runs row for
+      (daily_interest, "2026-10-13") rather than hand-posting a ledger
+      entry — lets the real catch-up loop replay that date through the
+      real, now-fixed engine code for every active investment, which is
+      idempotent per-investment (existing entries' idempotency keys
+      already exist, so nothing double-posts; only investments this bug
+      actually skipped get a new entry). Verified end-to-end against dev
+      DB: no-row case, seeded-COMPLETED-row dry-run, and real execute
+      -then-confirm-deleted, all behave correctly.
+- [x] Lessons.md entry added.
+- [ ] Commit + push (daily-interest.ts fix + tests). The backfill script
+      itself: confirm with Zac whether to commit it (prior repair scripts
+      were committed) or keep it untracked like reset-platform-data.ts —
+      this one isn't flagged "do not commit" so defaulting to committing
+      it, matching repair-simulated-daily-interest-cmudeva3t.ts's own
+      precedent, unless told otherwise.
