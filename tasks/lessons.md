@@ -2243,3 +2243,65 @@ needs at least one test fixture with a genuinely non-midnight base instant
 covers choosing WHEN near midnight to test; this adds WHICH fields need a
 non-midnight fixture in the first place (anything derived by adding days/
 months to a real timestamp, not just raw `forDate` arguments).
+
+## 2026-10-16 — post-phase (dashboard chart + Today's profit bucketed by createdAt, the 5th instance of this bug class — and a NEW variant of it)
+Mistake: `getTodayInterestCreditA`, `getDailyInterestHistoryA` (wallets.ts)
+and `getInvestmentProfitBreakdownForUser`'s `todayProfit` (investments.ts)
+all bucketed DAILY_INTEREST ledger rows by `createdAt`. The real daily cron
+fires at 00:05 Asia/Dubai — i.e. just AFTER the business day it processes
+has fully elapsed — so a row representing day D is always physically
+INSERTED during day D+1's own Dubai business day. Bucketing by `createdAt`
+therefore attributes every real entry to the day AFTER the one it actually
+represents, every single time, for every entry the real cron has ever
+posted. Confirmed numerically: the row for periodKey "2026-10-15" has a
+real `createdAt` of ~00:05 Dubai on Oct 16, which `startOfDubaiDay` buckets
+under Oct 16 — reported as "$1.93 shows under 'Today' but the chart's Oct
+15 bar is $0," which is exactly this misattribution. Only surfaced now
+because Oct 16 happened to be a Friday (no entry can physically be CREATED
+during that day's own cron run, since Fridays are skipped entirely) — on
+any non-Friday "day after," the misattributed entry would have silently
+inflated the WRONG day's bar with no visible anomaly at all, which is
+almost certainly why this has been live and unnoticed since Phase 10.
+This is the FIFTH documented instance of "a date-bucketing function uses
+the wrong field/timezone basis" in this project (see the SCRUM-92-follow
+-up, SCRUM-80, and the two entries directly above this one) — but a
+genuinely NEW variant: every prior instance was UTC-vs-Dubai TIMEZONE
+confusion on the SAME field; this one is bucketing by the wrong FIELD
+entirely (`createdAt`, the real wall-clock write time) instead of the
+field that actually encodes the business date (the idempotency key's
+trailing `YYYY-MM-DD`, already established as the stable source of truth
+for "which day does this entry represent" by `findNextSimulationStartDate`
+and the Developer Tools code, but never applied to these three
+dashboard-facing read functions until now).
+Separately, while fixing this: considered padding the `createdAt` DB
+-level pre-filter (±1 day, enough for the real cron's own cadence) as a
+performance guard instead of dropping it entirely — rejected once traced
+through what a backdated/simulated entry's `createdAt` actually looks
+like (Developer Tools' "Simulate Daily Interest": `createdAt` is whenever
+the admin clicked the button, which can be ANY real date, arbitrarily far
+from the fabricated date it represents). A padded window sized for the
+real cron's cadence would silently miss a legitimate backdated entry
+outside that window — fetching all of a user's DAILY_INTEREST credits and
+filtering precisely in JS is the only version that's correct in both
+cases; row counts here are small enough (one row per investment per
+non-Friday day) that this costs nothing meaningful.
+Rule: (1) **`createdAt` is never a reliable stand-in for "which business
+day does this ledger row represent," for ANY job that writes a day's
+result after that day has already ended** — this applies beyond
+DAILY_INTEREST to any future scheduled job with the same "process day D,
+write the result during day D+1" shape; the idempotency key (or a future
+dedicated business-date column, if one is ever added) is the only
+trustworthy source. (2) **A bug like this can ship silently for a long
+time if it only diverges visibly under a rare precondition** (here: the
+"day after" bucket happening to be a Friday, so nothing else could mask
+the misattribution) — when investigating a dashboard figure that "looks
+one day off" or "disappears only sometimes," check whether today's
+specific calendar position (a Friday, a month boundary, etc.) is itself
+part of what makes the bug visible, rather than assuming the bug is new
+or intermittent. (3) **Before padding a DB-side date filter as a
+performance optimization for a field computed from real data, trace
+every real write path that touches that field** — a padding window sized
+for the common case (the real cron's predictable nightly cadence) can
+be systematically wrong for a less common but still real case (a manual
+backdated simulation) that this same codebase already has a dedicated
+feature for creating.

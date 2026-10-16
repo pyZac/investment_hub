@@ -5,7 +5,7 @@ import { postTransaction } from "./ledger-transaction";
 import { payDirectCommissionInTx } from "./direct-commission";
 import { rollupBvForPurchase } from "./binary-tree";
 import { accrueMrvForPurchase } from "./rank";
-import { DAY_MS, startOfDubaiDay } from "./business-day";
+import { dubaiDayKey, startOfDubaiDay } from "./business-day";
 
 const purchasePackageInputSchema = z.object({
   packageId: z.string(),
@@ -231,26 +231,14 @@ export async function getInvestmentProfitBreakdownForUser(
     return [];
   }
 
-  const startOfToday = startOfDubaiDay(forDate);
-  const startOfTomorrow = new Date(startOfToday.getTime() + DAY_MS);
+  const todayKey = dubaiDayKey(startOfDubaiDay(forDate));
 
   return Promise.all(
     activeInvestments.map(async (investment) => {
       const idempotencyKeyPrefix = `daily_interest:${userId}:${investment.id}:`;
 
-      const [todayResult, totalCreditResult, reversalEntries] = await Promise.all([
-        prisma.ledgerEntry.aggregate({
-          where: {
-            referenceType: "investment",
-            referenceId: investment.id,
-            entryType: "DAILY_INTEREST",
-            wallet: "A",
-            direction: "CREDIT",
-            createdAt: { gte: startOfToday, lt: startOfTomorrow },
-          },
-          _sum: { amount: true },
-        }),
-        prisma.ledgerEntry.aggregate({
+      const [creditEntries, reversalEntries] = await Promise.all([
+        prisma.ledgerEntry.findMany({
           where: {
             referenceType: "investment",
             referenceId: investment.id,
@@ -258,7 +246,7 @@ export async function getInvestmentProfitBreakdownForUser(
             wallet: "A",
             direction: "CREDIT",
           },
-          _sum: { amount: true },
+          select: { amount: true, idempotencyKey: true },
         }),
         prisma.ledgerEntry.findMany({
           where: {
@@ -272,7 +260,17 @@ export async function getInvestmentProfitBreakdownForUser(
       ]);
 
       const zero = new Prisma.Decimal(0);
-      const totalCredited = totalCreditResult._sum.amount ?? zero;
+      // Bucketed by each entry's idempotency-key date, never `createdAt` —
+      // the real cron always WRITES a day's row during the FOLLOWING Dubai
+      // business day (it fires at 00:05 Asia/Dubai, just after the day it's
+      // processing has fully elapsed), so `createdAt` is never the day the
+      // entry represents. See wallets.ts's `businessDateFromIdempotencyKey`
+      // for the full explanation — this is the same bug, same fix, in the
+      // per-investment counterpart to that file's two functions.
+      const todayCredited = creditEntries
+        .filter((entry) => entry.idempotencyKey.slice(entry.idempotencyKey.lastIndexOf(":") + 1) === todayKey)
+        .reduce((sum, entry) => sum.add(entry.amount), zero);
+      const totalCredited = creditEntries.reduce((sum, entry) => sum.add(entry.amount), zero);
       const totalReversed = reversalEntries.reduce((sum, entry) => sum.add(entry.amount), zero);
 
       return {
@@ -280,7 +278,7 @@ export async function getInvestmentProfitBreakdownForUser(
         packageName: investment.package.name,
         amount: investment.amount,
         purchasedAt: investment.purchasedAt,
-        todayProfit: todayResult._sum.amount ?? zero,
+        todayProfit: todayCredited,
         totalProfit: totalCredited.sub(totalReversed),
       };
     }),

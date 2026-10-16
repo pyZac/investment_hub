@@ -4,6 +4,7 @@ import { prisma } from "./prisma";
 import { registerAsRoot } from "./users";
 import { cleanupLedgerEntriesForUsers } from "./test-helpers";
 import { getDailyInterestHistoryA, getTodayInterestCreditA, getWalletOverview } from "./wallets";
+import { DAY_MS, dubaiDayKey, startOfDubaiDay } from "./business-day";
 
 const createdUserIds: string[] = [];
 
@@ -33,14 +34,31 @@ async function makeUser(prefix: string) {
 }
 
 /**
- * Writes a ledger_entries row directly with an explicit createdAt, bypassing
- * postTransaction. postTransaction itself isn't under test here — only the
- * date-range aggregate query is — and createdAt (@default(now())) can't be
- * fabricated through the normal write path. The no-update/no-delete trigger
- * only blocks UPDATE/DELETE (invariant #2), not INSERT, so this is a plain
- * insert with a chosen idempotencyKey.
+ * Writes a ledger_entries row directly, bypassing postTransaction.
+ * postTransaction itself isn't under test here — only the business-date
+ * bucketing query is. `businessDate` is embedded in the idempotency key in
+ * the real `daily_interest:{userId}:{investmentId}:{YYYY-MM-DD}` format —
+ * the ONLY field getTodayInterestCreditA/getDailyInterestHistoryA actually
+ * read to decide which day a credit belongs to (see wallets.ts's
+ * `businessDateFromIdempotencyKey` comment for why `createdAt` is NOT that
+ * field: the real cron always WRITES a day's row during the FOLLOWING
+ * Dubai day).
+ *
+ * `createdAt` defaults to one Dubai day AFTER `businessDate` — matching
+ * the real cron's actual write pattern — specifically so these tests prove
+ * the functions bucket by the idempotency key, not by `createdAt`. A test
+ * that needs to prove `createdAt` is correctly IGNORED can pass an even
+ * more divergent `createdAtOverride` (e.g. a backdated-simulation-style
+ * value unrelated to `businessDate` at all).
  */
-async function seedInterestCredit(userId: string, amount: string, createdAt: Date) {
+async function seedInterestCredit(
+  userId: string,
+  amount: string,
+  businessDate: Date,
+  createdAtOverride?: Date,
+) {
+  const businessDayKey = dubaiDayKey(startOfDubaiDay(businessDate));
+  const createdAt = createdAtOverride ?? new Date(startOfDubaiDay(businessDate).getTime() + DAY_MS + 5 * 60 * 1000);
   await prisma.ledgerEntry.create({
     data: {
       userId,
@@ -51,7 +69,7 @@ async function seedInterestCredit(userId: string, amount: string, createdAt: Dat
       referenceType: "investment",
       referenceId: crypto.randomUUID(),
       comment: "Test daily interest credit.",
-      idempotencyKey: `test:${crypto.randomUUID()}`,
+      idempotencyKey: `daily_interest:${userId}:${crypto.randomUUID()}:${businessDayKey}`,
       createdAt,
     },
   });
@@ -138,13 +156,16 @@ describe("getTodayInterestCreditA", () => {
   // A fixed instant safely mid-day in Asia/Dubai (UTC+4), so date-boundary
   // math has no ambiguity: 2026-06-10T08:00:00Z = 2026-06-10T12:00:00+04:00.
   const NOON_DUBAI = new Date("2026-06-10T08:00:00.000Z");
-  const START_OF_DAY_UTC = new Date("2026-06-10T04:00:00.000Z"); // 00:00 Dubai — Dubai is 4h ahead
-  const YESTERDAY_LATE = new Date("2026-06-09T19:59:59.000Z"); // 23:59:59 Dubai the day before
-  const TOMORROW_EARLY = new Date("2026-06-11T04:00:00.000Z"); // 00:00 Dubai the next day
+  const YESTERDAY_NOON = new Date("2026-06-09T08:00:00.000Z");
+  const TOMORROW_NOON = new Date("2026-06-11T08:00:00.000Z");
 
-  it("sums today's DAILY_INTEREST Wallet A credits only", async () => {
+  it("sums today's DAILY_INTEREST Wallet A credits only, bucketed by the idempotency-key business date — NOT createdAt", async () => {
     const user = await makeUser("interest-today");
-    await seedInterestCredit(user.id, "12.50000000", START_OF_DAY_UTC);
+    // createdAt deliberately defaults to one Dubai day AFTER the business
+    // date (seedInterestCredit's own default) — matching the real cron's
+    // actual write pattern — specifically to prove this function no longer
+    // reads createdAt at all.
+    await seedInterestCredit(user.id, "12.50000000", NOON_DUBAI);
     await seedInterestCredit(user.id, "3.25000000", NOON_DUBAI);
 
     const total = await getTodayInterestCreditA(user.id, NOON_DUBAI);
@@ -154,7 +175,7 @@ describe("getTodayInterestCreditA", () => {
 
   it("excludes credits from the prior business day", async () => {
     const user = await makeUser("interest-yesterday");
-    await seedInterestCredit(user.id, "999.00000000", YESTERDAY_LATE);
+    await seedInterestCredit(user.id, "999.00000000", YESTERDAY_NOON);
 
     const total = await getTodayInterestCreditA(user.id, NOON_DUBAI);
 
@@ -163,11 +184,25 @@ describe("getTodayInterestCreditA", () => {
 
   it("excludes credits from the next business day", async () => {
     const user = await makeUser("interest-tomorrow");
-    await seedInterestCredit(user.id, "999.00000000", TOMORROW_EARLY);
+    await seedInterestCredit(user.id, "999.00000000", TOMORROW_NOON);
 
     const total = await getTodayInterestCreditA(user.id, NOON_DUBAI);
 
     expect(total.isZero()).toBe(true);
+  });
+
+  it("buckets by the idempotency-key date even when createdAt is wildly different (the real backdated-simulation scenario)", async () => {
+    const user = await makeUser("interest-backdated");
+    // A credit whose businessDate is "today" but whose createdAt is weeks
+    // in the future relative to it — the real shape of a Developer Tools
+    // "Simulate Daily Interest" backdated run, where createdAt is whenever
+    // the admin clicked the button, unrelated to the fabricated date.
+    const wildCreatedAt = new Date("2026-07-15T12:00:00.000Z");
+    await seedInterestCredit(user.id, "9.99000000", NOON_DUBAI, wildCreatedAt);
+
+    const total = await getTodayInterestCreditA(user.id, NOON_DUBAI);
+
+    expect(total.toString()).toBe("9.99");
   });
 
   it("excludes other entry types and other wallets", async () => {
@@ -243,6 +278,20 @@ describe("getDailyInterestHistoryA", () => {
     const history = await getDailyInterestHistoryA(user.id, DAY1_NOON, DAY3_NOON);
 
     expect([...history.keys()]).toEqual(["2026-06-09"]);
+  });
+
+  it("buckets by the idempotency-key business date, not createdAt — a real cron-written entry whose createdAt falls on the FOLLOWING Dubai day still lands under the day it represents", async () => {
+    const user = await makeUser("history-realistic-createdat");
+    // seedInterestCredit's default createdAt (one Dubai day after
+    // businessDate, 00:05-ish) mirrors exactly how the real daily cron
+    // writes a row — this is the actual bug this session fixed: bucketing
+    // by createdAt would have put this under 2026-06-09, not 2026-06-08.
+    await seedInterestCredit(user.id, "20.00000000", DAY1_NOON);
+
+    const history = await getDailyInterestHistoryA(user.id, DAY1_NOON, DAY3_NOON);
+
+    expect(history.get("2026-06-08")?.toString()).toBe("20");
+    expect(history.has("2026-06-09")).toBe(false);
   });
 
   it("excludes other entry types and other wallets", async () => {

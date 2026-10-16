@@ -156,7 +156,7 @@ describe("getInvestmentProfitBreakdownForUser", () => {
     expect(rows).toEqual([]);
   });
 
-  it("todayProfit sums only CREDIT entries whose createdAt falls in the Dubai business day containing forDate", async () => {
+  it("todayProfit sums only CREDIT entries whose idempotency-key date falls on the Dubai business day containing forDate", async () => {
     const user = await makeUser("breakdown-today");
     const pkg = await makePackage(`BreakdownPkg-${crypto.randomUUID()}`, "1000");
     const investment = await makeInvestment(user.id, pkg.id, "1000", new Date("2026-06-01T08:00:00.000Z"));
@@ -175,6 +175,27 @@ describe("getInvestmentProfitBreakdownForUser", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].todayProfit.eq("25")).toBe(true); // excludes the "10" from the prior Dubai day
     expect(rows[0].totalProfit.eq("35")).toBe(true); // 10 + 25, no reversals
+  });
+
+  it("todayProfit is bucketed by the idempotency-key date, not createdAt — matches the real cron's actual write pattern (writes a day's row during the FOLLOWING Dubai day)", async () => {
+    const user = await makeUser("breakdown-today-realistic");
+    const pkg = await makePackage(`BreakdownPkg-${crypto.randomUUID()}`, "1000");
+    const investment = await makeInvestment(user.id, pkg.id, "1000", new Date("2026-06-01T08:00:00.000Z"));
+
+    // The real daily cron fires at 00:05 Asia/Dubai, i.e. just after the
+    // business day it's processing has fully elapsed — so a row
+    // representing 2026-06-10 is actually WRITTEN around 2026-06-10T20:05
+    // UTC (00:05 Dubai on 2026-06-11). If todayProfit bucketed by createdAt
+    // instead of the idempotency key, this credit would wrongly disappear
+    // from "today" (2026-06-10) and appear under 2026-06-11 instead.
+    const realisticCronCreatedAt = new Date("2026-06-10T20:05:00.000Z");
+    await seedDailyInterestCredit(user.id, investment.id, "17.50", realisticCronCreatedAt, "2026-06-10");
+
+    const forDate = new Date("2026-06-10T08:00:00.000Z"); // noon Dubai, 2026-06-10 — "today"
+    const rows = await getInvestmentProfitBreakdownForUser(user.id, forDate);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].todayProfit.eq("17.50")).toBe(true);
   });
 
   it("totalProfit subtracts a reversed DAILY_INTEREST credit, even though the reversal shares no referenceType/referenceId with the original", async () => {

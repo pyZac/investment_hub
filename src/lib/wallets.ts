@@ -42,9 +42,43 @@ export async function getWalletOverview(
 }
 
 /**
+ * The business date a DAILY_INTEREST idempotency key represents — the
+ * trailing `YYYY-MM-DD` segment of `daily_interest:{userId}:{investmentId}:
+ * {date}` (accrueDailyInterestForInvestment's own stable key contract, see
+ * daily-interest.ts). This is the ONLY reliable source for "which day does
+ * this entry represent" — `createdAt` is the real wall-clock write time,
+ * which is NOT the same day for every entry the real cron posts: the
+ * scheduler fires at 00:05 Asia/Dubai, i.e. just after a business day has
+ * fully elapsed, so the row representing day D is always physically
+ * INSERTED during day D+1's own Dubai business day. Bucketing by
+ * `createdAt` therefore attributes every entry to the day AFTER the one it
+ * actually represents — this shipped silently because the two dates only
+ * visibly diverge when the "day after" bucket would otherwise be empty
+ * (e.g. a Friday, where no entry can physically be created during that
+ * day's own cron run), which is exactly the symptom that surfaced it: a
+ * real Oct 15 entry appearing to belong to Oct 16 instead.
+ */
+function businessDateFromIdempotencyKey(idempotencyKey: string): string {
+  return idempotencyKey.slice(idempotencyKey.lastIndexOf(":") + 1);
+}
+
+/**
  * Sum of today's DAILY_INTEREST credits to Wallet A, for the dashboard's
  * "today's profit" figure. "Today" is the business day in Asia/Dubai
- * containing `forDate`.
+ * containing `forDate`, determined by each entry's idempotency-key date,
+ * never `createdAt` (see `businessDateFromIdempotencyKey`'s own comment on
+ * why `createdAt` is the wrong field for this).
+ *
+ * Deliberately has NO `createdAt` pre-filter: a padded `createdAt` window
+ * would be correct for the real cron's normal nightly cadence (every real
+ * entry's `createdAt` is within about a day of the date it represents) but
+ * WRONG for a backdated/simulated entry (Developer Tools' "Simulate Daily
+ * Interest"), whose `createdAt` is whenever an admin ran the simulation —
+ * arbitrarily far from the fabricated date it represents. Fetches every
+ * DAILY_INTEREST credit for this user/wallet and filters precisely by the
+ * parsed idempotency-key date in JS instead — row counts here are small
+ * (one row per investment per non-Friday day), so a full per-user scan is
+ * cheap and always correct, rather than fast-but-occasionally-wrong.
  *
  * Takes `forDate` as a parameter and never calls `new Date()` internally
  * (invariant #4) — same rule as every other engine/query function in this
@@ -54,21 +88,22 @@ export async function getTodayInterestCreditA(
   userId: string,
   forDate: Date,
 ): Promise<Prisma.Decimal> {
-  const startOfDay = startOfDubaiDay(forDate);
-  const startOfNextDay = new Date(startOfDay.getTime() + DAY_MS);
+  const todayKey = dubaiDayKey(startOfDubaiDay(forDate));
 
-  const result = await prisma.ledgerEntry.aggregate({
+  const entries = await prisma.ledgerEntry.findMany({
     where: {
       userId,
       wallet: "A",
       direction: "CREDIT",
       entryType: "DAILY_INTEREST",
-      createdAt: { gte: startOfDay, lt: startOfNextDay },
     },
-    _sum: { amount: true },
+    select: { amount: true, idempotencyKey: true },
   });
 
-  return result._sum.amount ?? new Prisma.Decimal(0);
+  const zero = new Prisma.Decimal(0);
+  return entries
+    .filter((entry) => businessDateFromIdempotencyKey(entry.idempotencyKey) === todayKey)
+    .reduce((sum, entry) => sum.add(entry.amount), zero);
 }
 
 /**
@@ -85,6 +120,18 @@ export async function getTodayInterestCreditA(
  * zero" (a real anomaly on a non-Friday) are different facts that only the
  * caller building the chart series can tell apart.
  *
+ * Buckets by each entry's idempotency-key date, not `createdAt` — see
+ * `businessDateFromIdempotencyKey`'s comment. Deliberately has NO
+ * `createdAt` pre-filter for the same reason `getTodayInterestCreditA`
+ * doesn't: a backdated/simulated entry's `createdAt` can be arbitrarily
+ * far from the fabricated date it represents, so a `createdAt`-based
+ * window could silently exclude a real, legitimately-backdated entry that
+ * does belong in `[fromDate, toDate]`. Fetches every DAILY_INTEREST credit
+ * for this user/wallet and filters by the parsed key date in JS — then
+ * discards anything outside the requested range, so the returned map's
+ * key range is still exactly `[fromDate, toDate]` regardless of how much
+ * history exists outside it.
+ *
  * Takes both dates as parameters and never calls `new Date()` internally
  * (invariant #4).
  */
@@ -93,8 +140,8 @@ export async function getDailyInterestHistoryA(
   fromDate: Date,
   toDate: Date,
 ): Promise<Map<string, Prisma.Decimal>> {
-  const rangeStart = startOfDubaiDay(fromDate);
-  const rangeEnd = new Date(startOfDubaiDay(toDate).getTime() + DAY_MS);
+  const fromKey = dubaiDayKey(startOfDubaiDay(fromDate));
+  const toKey = dubaiDayKey(startOfDubaiDay(toDate));
 
   const entries = await prisma.ledgerEntry.findMany({
     where: {
@@ -102,14 +149,14 @@ export async function getDailyInterestHistoryA(
       wallet: "A",
       direction: "CREDIT",
       entryType: "DAILY_INTEREST",
-      createdAt: { gte: rangeStart, lt: rangeEnd },
     },
-    select: { amount: true, createdAt: true },
+    select: { amount: true, idempotencyKey: true },
   });
 
   const byDay = new Map<string, Prisma.Decimal>();
   for (const entry of entries) {
-    const key = dubaiDayKey(startOfDubaiDay(entry.createdAt));
+    const key = businessDateFromIdempotencyKey(entry.idempotencyKey);
+    if (key < fromKey || key > toKey) continue;
     const running = byDay.get(key) ?? new Prisma.Decimal(0);
     byDay.set(key, running.add(entry.amount));
   }
