@@ -2305,3 +2305,33 @@ for the common case (the real cron's predictable nightly cadence) can
 be systematically wrong for a less common but still real case (a manual
 backdated simulation) that this same codebase already has a dedicated
 feature for creating.
+
+## 2026-10-16 — post-phase (daily-profit-chart showing identical amounts across days)
+Mistake: none in the ledger/engine — investigated a report that the profit
+chart showed "$1.93" for every day, which looked like `accrueDailyInterest-
+ForInvestment` was compounding on principal instead of running balance.
+Confirmed via direct ledger query that the three real DAILY_INTEREST credits
+for the investment in question were genuinely different
+(1.85185185, 1.92663818, 1.93034325 — real compounding, correctly using
+principal + prior DAILY_INTEREST credits per the existing comment in
+`daily-interest.ts`) — the engine was never the problem. The actual cause was
+purely display: `daily-profit-chart.tsx`'s `formatAmount` capped
+`maximumFractionDigits` at 2, so two real but close-together daily deltas
+(here, 1.92663818 and 1.93034325) both rounded to the displayed "$1.93" in
+the tooltip and Y-axis, even though `buildDailyProfitSeries` already passes
+the chart the full-precision `Number(Decimal)` value underneath (the
+`Number()` conversion there is fine — it's the documented last-render-step
+boundary, not a ledger computation).
+Rule: when a chart/dashboard figure "looks identical across days/rows" for a
+value that should be compounding, check the raw DB values FIRST (a direct
+ledger query) before suspecting the engine — if the raw values differ, the
+bug is in a formatting/display function's rounding precision, not the
+business logic, no matter how plausible "principal vs. running balance"
+sounds as an explanation. Fixed by bumping `formatAmount` in
+`daily-profit-chart.tsx` to `maximumFractionDigits: 4`, scoped to that one
+chart component only (confirmed with Zac rather than changing the shared 2dp
+display convention globally) — this chart's entire purpose is showing
+day-to-day compounding deltas that are often sub-cent, so 2dp defeats its own
+purpose in a way that doesn't apply to the rest of the app's money displays
+(wallet balances, totals, etc.), which stay at 2dp per the standing
+convention in CLAUDE.md.

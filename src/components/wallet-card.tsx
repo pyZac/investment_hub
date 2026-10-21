@@ -5,7 +5,7 @@ import { CountUp } from "@/components/count-up";
 
 /**
  * A wallet's balance renders as a static formatted string — only the
- * `footer` slot (used for Wallet A's "today's profit" figure) uses the
+ * `footer` slot (used for Wallet A's "last posted profit" figure) uses the
  * animated `CountUp`. Animating every balance on every page load would be
  * noisy; the count-up is specifically meant to make the daily interest
  * engine's "money growing" effect visible, not to decorate every number.
@@ -42,7 +42,7 @@ export function WalletCard({
   );
 }
 
-export function TodayProfitFooter({
+export function LastPostedProfitFooter({
   amount,
   locale,
   label,

@@ -122,7 +122,7 @@ afterAll(async () => {
 describe("getInvestmentProfitBreakdownForUser", () => {
   it("returns an empty array for a user with no active investments", async () => {
     const user = await makeUser("breakdown-empty");
-    const rows = await getInvestmentProfitBreakdownForUser(user.id, new Date());
+    const rows = await getInvestmentProfitBreakdownForUser(user.id);
     expect(rows).toEqual([]);
   });
 
@@ -132,14 +132,14 @@ describe("getInvestmentProfitBreakdownForUser", () => {
     const purchasedAt = new Date("2026-06-01T08:00:00.000Z");
     const investment = await makeInvestment(user.id, pkg.id, "1000", purchasedAt);
 
-    const rows = await getInvestmentProfitBreakdownForUser(user.id, new Date("2026-06-15T08:00:00.000Z"));
+    const rows = await getInvestmentProfitBreakdownForUser(user.id);
 
     expect(rows).toHaveLength(1);
     expect(rows[0].investmentId).toBe(investment.id);
     expect(rows[0].packageName).toBe(pkg.name);
     expect(new Prisma.Decimal(rows[0].amount).eq("1000")).toBe(true);
     expect(rows[0].purchasedAt.toISOString()).toBe(purchasedAt.toISOString());
-    expect(rows[0].todayProfit.isZero()).toBe(true);
+    expect(rows[0].lastPostedProfit).toBeNull();
     expect(rows[0].totalProfit.isZero()).toBe(true);
   });
 
@@ -152,50 +152,47 @@ describe("getInvestmentProfitBreakdownForUser", () => {
       data: { status: "CAPITAL_RELEASED", capitalReleasedAt: new Date("2026-06-10T00:00:00.000Z") },
     });
 
-    const rows = await getInvestmentProfitBreakdownForUser(user.id, new Date("2026-06-15T08:00:00.000Z"));
+    const rows = await getInvestmentProfitBreakdownForUser(user.id);
     expect(rows).toEqual([]);
   });
 
-  it("todayProfit sums only CREDIT entries whose idempotency-key date falls on the Dubai business day containing forDate", async () => {
-    const user = await makeUser("breakdown-today");
+  it("lastPostedProfit is the amount of the single most recent CREDIT, picked by idempotency-key date — not a sum", async () => {
+    const user = await makeUser("breakdown-lastposted");
     const pkg = await makePackage(`BreakdownPkg-${crypto.randomUUID()}`, "1000");
     const investment = await makeInvestment(user.id, pkg.id, "1000", new Date("2026-06-01T08:00:00.000Z"));
 
-    // Dubai day boundary: 2026-06-10 00:00 Dubai = 2026-06-09T20:00:00.000Z.
-    // "Yesterday" (Dubai) credit, just before the boundary.
     await seedDailyInterestCredit(user.id, investment.id, "10", new Date("2026-06-09T19:00:00.000Z"), "2026-06-09");
-    // "Today" (Dubai) credit, just after the boundary — near-midnight edge,
-    // per the standing lesson that boundary-adjacent fixtures catch
-    // UTC-vs-Dubai mismatches that noon-aligned fixtures hide.
+    // Later business date — near-midnight edge, per the standing lesson
+    // that boundary-adjacent fixtures catch UTC-vs-Dubai mismatches that
+    // noon-aligned fixtures hide.
     await seedDailyInterestCredit(user.id, investment.id, "25", new Date("2026-06-09T21:00:00.000Z"), "2026-06-10");
 
-    const forDate = new Date("2026-06-10T08:00:00.000Z"); // noon Dubai, 2026-06-10
-    const rows = await getInvestmentProfitBreakdownForUser(user.id, forDate);
+    const rows = await getInvestmentProfitBreakdownForUser(user.id);
 
     expect(rows).toHaveLength(1);
-    expect(rows[0].todayProfit.eq("25")).toBe(true); // excludes the "10" from the prior Dubai day
-    expect(rows[0].totalProfit.eq("35")).toBe(true); // 10 + 25, no reversals
+    expect(rows[0].lastPostedProfit?.eq("25")).toBe(true); // the later entry's own amount, not 10+25
+    expect(rows[0].totalProfit.eq("35")).toBe(true); // total is still a real sum: 10 + 25, no reversals
   });
 
-  it("todayProfit is bucketed by the idempotency-key date, not createdAt — matches the real cron's actual write pattern (writes a day's row during the FOLLOWING Dubai day)", async () => {
-    const user = await makeUser("breakdown-today-realistic");
+  it("lastPostedProfit is picked by the idempotency-key date, not createdAt — matches the real cron's actual write pattern (writes a day's row during the FOLLOWING Dubai day)", async () => {
+    const user = await makeUser("breakdown-lastposted-realistic");
     const pkg = await makePackage(`BreakdownPkg-${crypto.randomUUID()}`, "1000");
     const investment = await makeInvestment(user.id, pkg.id, "1000", new Date("2026-06-01T08:00:00.000Z"));
 
     // The real daily cron fires at 00:05 Asia/Dubai, i.e. just after the
     // business day it's processing has fully elapsed — so a row
-    // representing 2026-06-10 is actually WRITTEN around 2026-06-10T20:05
-    // UTC (00:05 Dubai on 2026-06-11). If todayProfit bucketed by createdAt
-    // instead of the idempotency key, this credit would wrongly disappear
-    // from "today" (2026-06-10) and appear under 2026-06-11 instead.
-    const realisticCronCreatedAt = new Date("2026-06-10T20:05:00.000Z");
-    await seedDailyInterestCredit(user.id, investment.id, "17.50", realisticCronCreatedAt, "2026-06-10");
+    // representing 2026-06-01 (the EARLIER business date) is actually
+    // WRITTEN at a createdAt later than a row representing 2026-06-10 would
+    // be if seeded with a normal same-day createdAt. Picking "most recent"
+    // by createdAt instead of the idempotency key would wrongly prefer the
+    // earlier business date here.
+    await seedDailyInterestCredit(user.id, investment.id, "5.00", new Date("2026-06-11T20:05:00.000Z"), "2026-06-01");
+    await seedDailyInterestCredit(user.id, investment.id, "17.50", new Date("2026-06-02T08:00:00.000Z"), "2026-06-10");
 
-    const forDate = new Date("2026-06-10T08:00:00.000Z"); // noon Dubai, 2026-06-10 — "today"
-    const rows = await getInvestmentProfitBreakdownForUser(user.id, forDate);
+    const rows = await getInvestmentProfitBreakdownForUser(user.id);
 
     expect(rows).toHaveLength(1);
-    expect(rows[0].todayProfit.eq("17.50")).toBe(true);
+    expect(rows[0].lastPostedProfit?.eq("17.50")).toBe(true);
   });
 
   it("totalProfit subtracts a reversed DAILY_INTEREST credit, even though the reversal shares no referenceType/referenceId with the original", async () => {
@@ -208,7 +205,7 @@ describe("getInvestmentProfitBreakdownForUser", () => {
     // Reverse only the 2026-06-08 credit.
     await seedReversal(user.id, investment.id, "50", "2026-06-08", new Date("2026-06-20T08:00:00.000Z"));
 
-    const rows = await getInvestmentProfitBreakdownForUser(user.id, new Date("2026-06-25T08:00:00.000Z"));
+    const rows = await getInvestmentProfitBreakdownForUser(user.id);
 
     expect(rows).toHaveLength(1);
     // 50 + 60 credited, 50 reversed -> 60 net.
@@ -225,7 +222,7 @@ describe("getInvestmentProfitBreakdownForUser", () => {
     await seedDailyInterestCredit(targetUser.id, targetInvestment.id, "10", new Date("2026-06-10T08:00:00.000Z"), "2026-06-10");
     await seedDailyInterestCredit(otherUser.id, otherInvestment.id, "999", new Date("2026-06-10T08:00:00.000Z"), "2026-06-10");
 
-    const rows = await getInvestmentProfitBreakdownForUser(targetUser.id, new Date("2026-06-10T08:00:00.000Z"));
+    const rows = await getInvestmentProfitBreakdownForUser(targetUser.id);
 
     expect(rows).toHaveLength(1);
     expect(rows[0].investmentId).toBe(targetInvestment.id);
@@ -242,7 +239,7 @@ describe("getInvestmentProfitBreakdownForUser", () => {
     await seedDailyInterestCredit(user.id, investmentSmall.id, "5", new Date("2026-06-10T08:00:00.000Z"), "2026-06-10");
     await seedDailyInterestCredit(user.id, investmentLarge.id, "20", new Date("2026-06-10T08:00:00.000Z"), "2026-06-10");
 
-    const rows = await getInvestmentProfitBreakdownForUser(user.id, new Date("2026-06-10T08:00:00.000Z"));
+    const rows = await getInvestmentProfitBreakdownForUser(user.id);
 
     expect(rows).toHaveLength(2);
     const small = rows.find((r) => r.investmentId === investmentSmall.id)!;

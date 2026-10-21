@@ -22,7 +22,7 @@ export function startOfDubaiDay(forDate: Date): Date {
  * *UTC* calendar date is one day behind the Dubai date it represents (Dubai
  * midnight = 20:00 UTC the prior day), so slicing `toISOString()` directly
  * would silently key every day one day too early. This bug shipped once
- * already (SCRUM-92's `getTodayInterestCreditA`/`getDailyInterestHistoryA`
+ * already (SCRUM-92's `getLastPostedInterestCreditA`/`getDailyInterestHistoryA`
  * bucketing) and a second, independent instance of the same mistake in
  * `daily-profit-series.ts`'s date-range walk (keying by `cursor.toISOString()
  * .slice(0, 10)` — the UTC date — instead of this function) silently

@@ -63,33 +63,26 @@ function businessDateFromIdempotencyKey(idempotencyKey: string): string {
 }
 
 /**
- * Sum of today's DAILY_INTEREST credits to Wallet A, for the dashboard's
- * "today's profit" figure. "Today" is the business day in Asia/Dubai
- * containing `forDate`, determined by each entry's idempotency-key date,
- * never `createdAt` (see `businessDateFromIdempotencyKey`'s own comment on
- * why `createdAt` is the wrong field for this).
+ * The amount of the most recently posted DAILY_INTEREST credit to Wallet A,
+ * across all of this user's investments — for the dashboard's "last posted"
+ * profit figure. Deliberately NOT "today's total": the real cron fires at
+ * 00:05 Asia/Dubai, just after the day it's processing has fully elapsed, so
+ * "today's accrual" reads as $0.00 for the entire business day until the cron
+ * actually runs — this shows the most recent real credit instead, which is
+ * never spuriously zero just because of what time it is right now.
  *
- * Deliberately has NO `createdAt` pre-filter: a padded `createdAt` window
- * would be correct for the real cron's normal nightly cadence (every real
- * entry's `createdAt` is within about a day of the date it represents) but
- * WRONG for a backdated/simulated entry (Developer Tools' "Simulate Daily
- * Interest"), whose `createdAt` is whenever an admin ran the simulation —
- * arbitrarily far from the fabricated date it represents. Fetches every
- * DAILY_INTEREST credit for this user/wallet and filters precisely by the
- * parsed idempotency-key date in JS instead — row counts here are small
- * (one row per investment per non-Friday day), so a full per-user scan is
- * cheap and always correct, rather than fast-but-occasionally-wrong.
+ * "Most recent" is determined by each entry's idempotency-key date (highest
+ * `YYYY-MM-DD`), never `createdAt` — same reasoning as
+ * `businessDateFromIdempotencyKey`'s own comment: `createdAt` is the real
+ * wall-clock write time, which lags the business date it represents by one
+ * Dubai day for the real cron, and can diverge arbitrarily for a backdated/
+ * simulated entry (Developer Tools' "Simulate Daily Interest").
  *
- * Takes `forDate` as a parameter and never calls `new Date()` internally
- * (invariant #4) — same rule as every other engine/query function in this
- * project, even though this one is read-only.
+ * Returns `null` if this user has no DAILY_INTEREST credit at all yet (e.g.
+ * every investment is still inside its 7-day waiting period) — the caller
+ * displays $0.00 for that case, same as before.
  */
-export async function getTodayInterestCreditA(
-  userId: string,
-  forDate: Date,
-): Promise<Prisma.Decimal> {
-  const todayKey = dubaiDayKey(startOfDubaiDay(forDate));
-
+export async function getLastPostedInterestCreditA(userId: string): Promise<Prisma.Decimal | null> {
   const entries = await prisma.ledgerEntry.findMany({
     where: {
       userId,
@@ -100,10 +93,16 @@ export async function getTodayInterestCreditA(
     select: { amount: true, idempotencyKey: true },
   });
 
-  const zero = new Prisma.Decimal(0);
-  return entries
-    .filter((entry) => businessDateFromIdempotencyKey(entry.idempotencyKey) === todayKey)
-    .reduce((sum, entry) => sum.add(entry.amount), zero);
+  if (entries.length === 0) {
+    return null;
+  }
+
+  const mostRecent = entries.reduce((latest, entry) =>
+    businessDateFromIdempotencyKey(entry.idempotencyKey) > businessDateFromIdempotencyKey(latest.idempotencyKey)
+      ? entry
+      : latest,
+  );
+  return mostRecent.amount;
 }
 
 /**
@@ -122,7 +121,7 @@ export async function getTodayInterestCreditA(
  *
  * Buckets by each entry's idempotency-key date, not `createdAt` — see
  * `businessDateFromIdempotencyKey`'s comment. Deliberately has NO
- * `createdAt` pre-filter for the same reason `getTodayInterestCreditA`
+ * `createdAt` pre-filter for the same reason `getLastPostedInterestCreditA`
  * doesn't: a backdated/simulated entry's `createdAt` can be arbitrarily
  * far from the fabricated date it represents, so a `createdAt`-based
  * window could silently exclude a real, legitimately-backdated entry that

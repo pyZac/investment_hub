@@ -220,9 +220,17 @@ function formatDayLabel(dateKey: string, numeralSafeLocale: string): string {
   }).format(date);
 }
 
+/**
+ * This chart's whole point is showing day-to-day compounding deltas, which
+ * are often sub-cent (e.g. $1.92663818 vs $1.93034325 — a ~$0.0037
+ * difference). The app's standard 2dp display convention rounds those to the
+ * same "$1.93" and makes genuinely compounding interest look flat — a
+ * chart-local exception to 4dp, confirmed with Zac, rather than changing the
+ * shared display convention everywhere money is shown.
+ */
 function formatAmount(value: number, numeralSafeLocale: string): string {
   return new Intl.NumberFormat(numeralSafeLocale, {
     minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
+    maximumFractionDigits: 4,
   }).format(value);
 }

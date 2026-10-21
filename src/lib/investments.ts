@@ -5,7 +5,6 @@ import { postTransaction } from "./ledger-transaction";
 import { payDirectCommissionInTx } from "./direct-commission";
 import { rollupBvForPurchase } from "./binary-tree";
 import { accrueMrvForPurchase } from "./rank";
-import { dubaiDayKey, startOfDubaiDay } from "./business-day";
 
 const purchasePackageInputSchema = z.object({
   packageId: z.string(),
@@ -182,24 +181,27 @@ export type InvestmentProfitBreakdownRow = {
   packageName: string;
   amount: Prisma.Decimal;
   purchasedAt: Date;
-  todayProfit: Prisma.Decimal;
+  lastPostedProfit: Prisma.Decimal | null;
   totalProfit: Prisma.Decimal;
 };
 
 /**
  * Per-investment profit figures for the dashboard's breakdown section — the
- * per-investment counterpart to `getTodayInterestCreditA`/
+ * per-investment counterpart to `getLastPostedInterestCreditA`/
  * `getDailyInterestHistoryA` (wallets.ts), which only ever aggregate across
  * ALL of a user's investments. Scoped to the caller's own ACTIVE investments
  * only (reuses `listActiveInvestmentsForUser` — ownership enforced by
  * construction, invariant #9, no separate target-user param exists here any
  * more than it does there).
  *
- * `todayProfit`: sum of DAILY_INTEREST CREDIT entries for that investment
- * whose `createdAt` falls in the Dubai business day containing `forDate` —
- * same day-boundary convention as `getTodayInterestCreditA` (`startOfDubaiDay`
- * from business-day.ts, never a raw UTC slice, per the standing
- * dubaiDayKey/startOfDubaiDay rule in tasks/lessons.md).
+ * `lastPostedProfit`: the amount of the most recently posted DAILY_INTEREST
+ * CREDIT for THIS investment specifically — not a sum over "today" (the real
+ * cron fires at 00:05 Asia/Dubai, so "today's accrual" reads as $0.00 for the
+ * entire business day until the cron actually runs). "Most recent" is
+ * determined by the highest idempotency-key business date, never `createdAt`
+ * — same reasoning as `wallets.ts`'s `businessDateFromIdempotencyKey`. `null`
+ * if this investment has no DAILY_INTEREST credit yet (still inside its
+ * 7-day waiting period) — the caller displays $0.00 for that case.
  *
  * `totalProfit`: sum of every DAILY_INTEREST CREDIT ever posted for that
  * investment, minus any reversal of one. A DAILY_INTEREST reversal (the only
@@ -219,19 +221,19 @@ export type InvestmentProfitBreakdownRow = {
  * this investment's own idempotency-key prefix, not by any shared reference
  * scope with the originals.
  *
- * Takes `forDate` as a parameter and never calls `new Date()` internally
- * (invariant #4).
+ * No date parameter: `lastPostedProfit` is "most recent ever," not bucketed
+ * relative to "now," and `totalProfit` is a lifetime sum — neither needs a
+ * reference date, so none is taken (nothing left in this function would read
+ * one; invariant #4's "take dates as parameters" only applies to functions
+ * that actually compare against a point in time).
  */
 export async function getInvestmentProfitBreakdownForUser(
   userId: string,
-  forDate: Date,
 ): Promise<InvestmentProfitBreakdownRow[]> {
   const activeInvestments = await listActiveInvestmentsForUser(userId);
   if (activeInvestments.length === 0) {
     return [];
   }
-
-  const todayKey = dubaiDayKey(startOfDubaiDay(forDate));
 
   return Promise.all(
     activeInvestments.map(async (investment) => {
@@ -260,16 +262,23 @@ export async function getInvestmentProfitBreakdownForUser(
       ]);
 
       const zero = new Prisma.Decimal(0);
-      // Bucketed by each entry's idempotency-key date, never `createdAt` —
-      // the real cron always WRITES a day's row during the FOLLOWING Dubai
+      // Picked by each entry's idempotency-key date, never `createdAt` — the
+      // real cron always WRITES a day's row during the FOLLOWING Dubai
       // business day (it fires at 00:05 Asia/Dubai, just after the day it's
-      // processing has fully elapsed), so `createdAt` is never the day the
-      // entry represents. See wallets.ts's `businessDateFromIdempotencyKey`
-      // for the full explanation — this is the same bug, same fix, in the
-      // per-investment counterpart to that file's two functions.
-      const todayCredited = creditEntries
-        .filter((entry) => entry.idempotencyKey.slice(entry.idempotencyKey.lastIndexOf(":") + 1) === todayKey)
-        .reduce((sum, entry) => sum.add(entry.amount), zero);
+      // processing has fully elapsed), so `createdAt` doesn't reflect which
+      // entry is really "most recent" in business-date terms. See
+      // wallets.ts's `businessDateFromIdempotencyKey` for the full
+      // explanation — this is the same reasoning, same fix, in the
+      // per-investment counterpart to that file's `getLastPostedInterestCreditA`.
+      const lastPosted =
+        creditEntries.length === 0
+          ? null
+          : creditEntries.reduce((latest, entry) =>
+              entry.idempotencyKey.slice(entry.idempotencyKey.lastIndexOf(":") + 1) >
+              latest.idempotencyKey.slice(latest.idempotencyKey.lastIndexOf(":") + 1)
+                ? entry
+                : latest,
+            ).amount;
       const totalCredited = creditEntries.reduce((sum, entry) => sum.add(entry.amount), zero);
       const totalReversed = reversalEntries.reduce((sum, entry) => sum.add(entry.amount), zero);
 
@@ -278,7 +287,7 @@ export async function getInvestmentProfitBreakdownForUser(
         packageName: investment.package.name,
         amount: investment.amount,
         purchasedAt: investment.purchasedAt,
-        todayProfit: todayCredited,
+        lastPostedProfit: lastPosted,
         totalProfit: totalCredited.sub(totalReversed),
       };
     }),

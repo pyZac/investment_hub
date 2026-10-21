@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { prisma } from "./prisma";
 import { registerAsRoot } from "./users";
 import { cleanupLedgerEntriesForUsers } from "./test-helpers";
-import { getDailyInterestHistoryA, getTodayInterestCreditA, getWalletOverview } from "./wallets";
+import { getDailyInterestHistoryA, getLastPostedInterestCreditA, getWalletOverview } from "./wallets";
 import { DAY_MS, dubaiDayKey, startOfDubaiDay } from "./business-day";
 
 const createdUserIds: string[] = [];
@@ -38,7 +38,7 @@ async function makeUser(prefix: string) {
  * postTransaction itself isn't under test here — only the business-date
  * bucketing query is. `businessDate` is embedded in the idempotency key in
  * the real `daily_interest:{userId}:{investmentId}:{YYYY-MM-DD}` format —
- * the ONLY field getTodayInterestCreditA/getDailyInterestHistoryA actually
+ * the ONLY field getLastPostedInterestCreditA/getDailyInterestHistoryA actually
  * read to decide which day a credit belongs to (see wallets.ts's
  * `businessDateFromIdempotencyKey` comment for why `createdAt` is NOT that
  * field: the real cron always WRITES a day's row during the FOLLOWING
@@ -152,61 +152,56 @@ describe("getWalletOverview", () => {
   });
 });
 
-describe("getTodayInterestCreditA", () => {
+describe("getLastPostedInterestCreditA", () => {
   // A fixed instant safely mid-day in Asia/Dubai (UTC+4), so date-boundary
   // math has no ambiguity: 2026-06-10T08:00:00Z = 2026-06-10T12:00:00+04:00.
-  const NOON_DUBAI = new Date("2026-06-10T08:00:00.000Z");
-  const YESTERDAY_NOON = new Date("2026-06-09T08:00:00.000Z");
-  const TOMORROW_NOON = new Date("2026-06-11T08:00:00.000Z");
+  const DAY1_NOON = new Date("2026-06-08T08:00:00.000Z");
+  const DAY2_NOON = new Date("2026-06-09T08:00:00.000Z");
+  const DAY3_NOON = new Date("2026-06-10T08:00:00.000Z");
 
-  it("sums today's DAILY_INTEREST Wallet A credits only, bucketed by the idempotency-key business date — NOT createdAt", async () => {
-    const user = await makeUser("interest-today");
+  it("returns the amount of the single most recent DAILY_INTEREST credit, picked by idempotency-key business date — NOT createdAt", async () => {
+    const user = await makeUser("interest-lastposted");
     // createdAt deliberately defaults to one Dubai day AFTER the business
     // date (seedInterestCredit's own default) — matching the real cron's
-    // actual write pattern — specifically to prove this function no longer
-    // reads createdAt at all.
-    await seedInterestCredit(user.id, "12.50000000", NOON_DUBAI);
-    await seedInterestCredit(user.id, "3.25000000", NOON_DUBAI);
+    // actual write pattern — specifically to prove this function doesn't
+    // pick "most recent" by createdAt.
+    await seedInterestCredit(user.id, "12.50000000", DAY1_NOON);
+    await seedInterestCredit(user.id, "3.25000000", DAY2_NOON);
 
-    const total = await getTodayInterestCreditA(user.id, NOON_DUBAI);
+    const amount = await getLastPostedInterestCreditA(user.id);
 
-    expect(total.toString()).toBe("15.75");
+    expect(amount?.toString()).toBe("3.25");
   });
 
-  it("excludes credits from the prior business day", async () => {
-    const user = await makeUser("interest-yesterday");
-    await seedInterestCredit(user.id, "999.00000000", YESTERDAY_NOON);
+  it("picks the single most recent entry's own amount, not a sum across days", async () => {
+    const user = await makeUser("interest-lastposted-notsum");
+    await seedInterestCredit(user.id, "1.00000000", DAY1_NOON);
+    await seedInterestCredit(user.id, "2.00000000", DAY2_NOON);
+    await seedInterestCredit(user.id, "3.00000000", DAY3_NOON);
 
-    const total = await getTodayInterestCreditA(user.id, NOON_DUBAI);
+    const amount = await getLastPostedInterestCreditA(user.id);
 
-    expect(total.isZero()).toBe(true);
+    expect(amount?.toString()).toBe("3");
   });
 
-  it("excludes credits from the next business day", async () => {
-    const user = await makeUser("interest-tomorrow");
-    await seedInterestCredit(user.id, "999.00000000", TOMORROW_NOON);
-
-    const total = await getTodayInterestCreditA(user.id, NOON_DUBAI);
-
-    expect(total.isZero()).toBe(true);
-  });
-
-  it("buckets by the idempotency-key date even when createdAt is wildly different (the real backdated-simulation scenario)", async () => {
-    const user = await makeUser("interest-backdated");
-    // A credit whose businessDate is "today" but whose createdAt is weeks
-    // in the future relative to it — the real shape of a Developer Tools
-    // "Simulate Daily Interest" backdated run, where createdAt is whenever
-    // the admin clicked the button, unrelated to the fabricated date.
+  it("picks by the idempotency-key date even when createdAt is wildly different (the real backdated-simulation scenario)", async () => {
+    const user = await makeUser("interest-lastposted-backdated");
+    await seedInterestCredit(user.id, "12.50000000", DAY2_NOON);
+    // A credit whose businessDate is BEFORE the other entry's, but whose
+    // createdAt is weeks in the future relative to it — the real shape of a
+    // Developer Tools "Simulate Daily Interest" backdated run, where
+    // createdAt is whenever the admin clicked the button, unrelated to the
+    // fabricated date. Must NOT win just because its createdAt is later.
     const wildCreatedAt = new Date("2026-07-15T12:00:00.000Z");
-    await seedInterestCredit(user.id, "9.99000000", NOON_DUBAI, wildCreatedAt);
+    await seedInterestCredit(user.id, "9.99000000", DAY1_NOON, wildCreatedAt);
 
-    const total = await getTodayInterestCreditA(user.id, NOON_DUBAI);
+    const amount = await getLastPostedInterestCreditA(user.id);
 
-    expect(total.toString()).toBe("9.99");
+    expect(amount?.toString()).toBe("12.5");
   });
 
   it("excludes other entry types and other wallets", async () => {
-    const user = await makeUser("interest-otherentries");
+    const user = await makeUser("interest-lastposted-otherentries");
     await prisma.ledgerEntry.create({
       data: {
         userId: user.id,
@@ -216,7 +211,7 @@ describe("getTodayInterestCreditA", () => {
         entryType: "ADMIN_CREDIT",
         comment: "Not daily interest.",
         idempotencyKey: `test:${crypto.randomUUID()}`,
-        createdAt: NOON_DUBAI,
+        createdAt: DAY3_NOON,
       },
     });
     await prisma.ledgerEntry.create({
@@ -228,21 +223,21 @@ describe("getTodayInterestCreditA", () => {
         entryType: "DAILY_INTEREST",
         comment: "Wrong wallet.",
         idempotencyKey: `test:${crypto.randomUUID()}`,
-        createdAt: NOON_DUBAI,
+        createdAt: DAY3_NOON,
       },
     });
 
-    const total = await getTodayInterestCreditA(user.id, NOON_DUBAI);
+    const amount = await getLastPostedInterestCreditA(user.id);
 
-    expect(total.isZero()).toBe(true);
+    expect(amount).toBeNull();
   });
 
-  it("returns zero for a user with no interest credited today", async () => {
-    const user = await makeUser("interest-none");
+  it("returns null for a user with no DAILY_INTEREST credit ever", async () => {
+    const user = await makeUser("interest-lastposted-none");
 
-    const total = await getTodayInterestCreditA(user.id, NOON_DUBAI);
+    const amount = await getLastPostedInterestCreditA(user.id);
 
-    expect(total.isZero()).toBe(true);
+    expect(amount).toBeNull();
   });
 });
 

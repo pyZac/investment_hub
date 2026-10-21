@@ -1,7 +1,7 @@
 import { TrendingUp } from "lucide-react";
 import { getLocale, getTranslations } from "next-intl/server";
 import { requireSessionOrRedirect } from "@/lib/page-guard";
-import { getDailyInterestHistoryA, getTodayInterestCreditA, getWalletOverview } from "@/lib/wallets";
+import { getDailyInterestHistoryA, getLastPostedInterestCreditA, getWalletOverview } from "@/lib/wallets";
 import {
   getInvestmentProfitBreakdownForUser,
   listActiveInvestmentsForUser,
@@ -15,7 +15,7 @@ import {
 } from "@/lib/binary-cycle";
 import { getRankProgressForUser } from "@/lib/rank";
 import { toDisplay, toDisplayWithCurrency } from "@/lib/display";
-import { WalletCard, TodayProfitFooter } from "@/components/wallet-card";
+import { WalletCard, LastPostedProfitFooter } from "@/components/wallet-card";
 import { DailyProfitChart } from "@/components/daily-profit-chart";
 import { InvestmentsPanel } from "@/components/investments-panel";
 import { ProfitBreakdownPanel } from "@/components/profit-breakdown-panel";
@@ -33,13 +33,13 @@ export default async function DashboardPage() {
   const user = await requireSessionOrRedirect(new Date());
   const now = new Date();
 
-  const [wallets, todayProfitA, investments, activeInvestments, profitBreakdown, latestBinaryCycle, rankProgress] =
+  const [wallets, lastPostedProfitA, investments, activeInvestments, profitBreakdown, latestBinaryCycle, rankProgress] =
     await Promise.all([
       getWalletOverview(user.id),
-      getTodayInterestCreditA(user.id, now),
+      getLastPostedInterestCreditA(user.id),
       listInvestmentsForUser(user.id),
       listActiveInvestmentsForUser(user.id),
-      getInvestmentProfitBreakdownForUser(user.id, now),
+      getInvestmentProfitBreakdownForUser(user.id),
       getMyLatestBinaryCycle(user.id),
       getRankProgressForUser(user.id, now),
     ]);
@@ -79,11 +79,11 @@ export default async function DashboardPage() {
           subLabel={t("walletASubLabel")}
           amount={toDisplayWithCurrency(wallets.A)}
           footer={
-            <TodayProfitFooter
-              amount={toDisplay(todayProfitA)}
+            <LastPostedProfitFooter
+              amount={lastPostedProfitA ? toDisplay(lastPostedProfitA) : "0.00"}
               locale={locale}
-              label={t("todayProfitLabel")}
-              noneLabel={t("todayProfitNone")}
+              label={t("lastPostedProfitLabel")}
+              noneLabel={t("lastPostedProfitNone")}
             />
           }
         />

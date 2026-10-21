@@ -55,9 +55,9 @@ export async function ProfitBreakdownPanel({
 
             <div className="flex flex-row items-center gap-6">
               <div className="space-y-0.5 text-end">
-                <p className="text-xs text-muted-foreground">{t("profitBreakdownTodayLabel")}</p>
+                <p className="text-xs text-muted-foreground">{t("profitBreakdownLastPostedLabel")}</p>
                 <p dir="ltr" className="font-heading text-sm font-semibold tabular-nums text-success">
-                  ${toDisplay(row.todayProfit)}
+                  ${toDisplay(row.lastPostedProfit ?? 0)}
                 </p>
               </div>
               <div className="space-y-0.5 text-end">
